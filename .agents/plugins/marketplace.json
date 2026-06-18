@@ -1,0 +1,20 @@
+{
+  "name": "codex-auto-pr-loop",
+  "interface": {
+    "displayName": "HOLO-Codex"
+  },
+  "plugins": [
+    {
+      "name": "autonomous-pr-loop",
+      "source": {
+        "source": "local",
+        "path": "./plugins/autonomous-pr-loop"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Engineering"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+# Runtime and local state
+.agent-loop/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+
+# Private/local agent context
+AGENTS.md
+CLAUDE.md
+HANDOFF.md
+.claude/
+
+# Historical/private development records excluded from package artifacts
+docs/plans/
+docs/specs/
+docs/research/
+docs/logseq/
+docs/pages/
+docs/journals/
+
+# Build/test/dev artifacts
+node_modules/
+dist/
+coverage/
+.vitest/
+tmp/
+.DS_Store

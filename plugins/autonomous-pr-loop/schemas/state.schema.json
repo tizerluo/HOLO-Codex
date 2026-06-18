@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://holo-codex.local/schemas/state.schema.json",
+  "title": "AgentLoopStateSnapshot",
+  "type": "object",
+  "required": ["schemaVersion", "status"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "status": { "type": "string" },
+    "gate": {
+      "type": ["object", "null"],
+      "properties": {
+        "kind": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

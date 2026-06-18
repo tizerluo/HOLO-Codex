@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://holo-codex.local/schemas/plugin.schema.json",
+  "title": "CodexPluginManifest",
+  "type": "object",
+  "required": ["name", "version", "description", "skills", "interface"],
+  "additionalProperties": true,
+  "properties": {
+    "name": { "const": "autonomous-pr-loop" },
+    "version": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "skills": { "const": "./skills/" },
+    "interface": {
+      "type": "object",
+      "required": ["displayName", "shortDescription", "category", "capabilities", "defaultPrompt"],
+      "additionalProperties": true,
+      "properties": {
+        "displayName": { "const": "HOLO-Codex" },
+        "shortDescription": { "type": "string", "minLength": 1 },
+        "category": { "const": "Engineering" },
+        "capabilities": {
+          "type": "array",
+          "contains": { "const": "Write" }
+        },
+        "defaultPrompt": {
+          "type": "array",
+          "contains": { "const": "进入 HOLO-Codex，继续跑到 gate" }
+        }
+      }
+    }
+  }
+}

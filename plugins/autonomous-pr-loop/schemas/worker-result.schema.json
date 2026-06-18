@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://holo-codex.local/schemas/worker-result.schema.json",
+  "title": "WorkerResult",
+  "type": "object",
+  "required": ["ok", "summary", "changedFiles", "commandsRun", "testsRun", "gitnexus", "outOfScope", "followUps"],
+  "additionalProperties": false,
+  "properties": {
+    "ok": { "type": "boolean" },
+    "summary": { "type": "string" },
+    "changedFiles": { "type": "array", "items": { "type": "string" } },
+    "commandsRun": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "exitCode"],
+        "additionalProperties": false,
+        "properties": {
+          "command": { "type": "string" },
+          "exitCode": { "type": "integer" }
+        }
+      }
+    },
+    "testsRun": { "type": "array", "items": { "type": "string" } },
+    "gitnexus": {
+      "type": "object",
+      "required": ["impactRun", "detectChangesRun"],
+      "additionalProperties": false,
+      "properties": {
+        "impactRun": { "type": "boolean" },
+        "detectChangesRun": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    },
+    "outOfScope": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "item": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "followUps": { "type": "array", "items": { "type": "string" } },
+    "error": {
+      "type": "object",
+      "required": ["kind", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

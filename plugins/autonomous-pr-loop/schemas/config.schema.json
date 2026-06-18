@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://holo-codex.local/schemas/config.schema.json",
+  "title": "AgentLoopConfig",
+  "type": "object",
+  "required": ["repoId"],
+  "additionalProperties": false,
+  "properties": {
+    "repoId": { "type": "string", "minLength": 1 },
+    "locale": { "enum": ["zh-CN", "en-US", "system"] },
+    "loopShape": { "enum": ["pr-loop", "generic-loop"] },
+    "workflowProfile": {
+      "enum": [
+        "default_pr_loop",
+        "docs_only_loop",
+        "review_fix_loop",
+        "release_ready_loop",
+        "research_report_loop",
+        "document_preparation_loop",
+        "repo_hygiene_loop",
+        "weekly_review_loop",
+        "data_extraction_loop"
+      ]
+    },
+    "roleProfile": { "enum": ["default_pr_roles"] },
+    "baseBranch": { "type": "string", "minLength": 1 },
+    "branchPrefix": { "type": "string", "minLength": 1 },
+    "plansDir": { "type": "string", "minLength": 1 },
+    "lintCommand": { "type": "string", "minLength": 1 },
+    "testCommand": { "type": "string", "minLength": 1 },
+    "gitnexusRepo": { "type": "string", "minLength": 1 },
+    "gitnexusRequired": { "type": "boolean" },
+    "requiredChecks": { "type": "array", "items": { "type": "string" } },
+    "requireReviewApproval": { "type": "boolean" },
+    "autonomyMode": {
+      "enum": ["supervised", "autonomous_until_gate", "autonomous_until_terminal"]
+    },
+    "mergeMode": {
+      "enum": ["manual", "conditional", "disabled"]
+    },
+    "notifyMode": {
+      "enum": ["all_gates", "important_only", "blockers_only"]
+    },
+    "reviewHandling": {
+      "enum": ["fix_scoped_and_carry_forward", "ask_on_any_review", "require_zero_open_findings"]
+    },
+    "carryoverTarget": { "type": "string", "minLength": 1 },
+    "allowAutoMerge": { "type": "boolean" },
+    "maxReviewFixRounds": { "type": "integer", "minimum": 0 },
+    "maxTestFixRounds": { "type": "integer", "minimum": 0 },
+    "maxCiReruns": { "type": "integer", "minimum": 0 },
+    "commandTimeoutMs": { "type": "integer", "minimum": 1 },
+    "commandOutputLimitBytes": { "type": "integer", "minimum": 1 },
+    "githubRetryMaxAttempts": { "type": "integer", "minimum": 1 },
+    "githubRetryBaseDelayMs": { "type": "integer", "minimum": 1 },
+    "reviewCiPollIntervalMs": { "type": "integer", "minimum": 1 },
+    "reviewCiMaxWaitMs": { "type": "integer", "minimum": 1 },
+    "workerBackend": { "enum": ["codex-exec", "codex-app-server"] },
+    "workerTimeoutMs": { "type": "integer", "minimum": 1 },
+    "workerMaxRetries": { "type": "integer", "minimum": 0 },
+    "workerEphemeral": { "type": "boolean" },
+    "protectedPaths": { "type": "array", "items": { "type": "string" } },
+    "dashboard": {
+      "type": "object",
+      "required": ["enabled", "host"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    }
+  }
+}

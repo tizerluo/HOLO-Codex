@@ -1,0 +1,32 @@
+.DS_Store
+**/.DS_Store
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+.agent-loop/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+.vitest/
+tmp/
+
+# Local agent context files
+.claude/
+AGENTS.md
+CLAUDE.md
+HANDOFF.md
+
+# Logseq graph artifacts (read-only browsing of docs/, no notes authored here)
+/docs/logseq/
+/docs/pages/
+/docs/journals/
+
+# Historical private planning docs are not part of the public source tree.
+/docs/plans/
+/docs/specs/
+/docs/research/

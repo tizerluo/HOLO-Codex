@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://holo-codex.local/schemas/worker-event.schema.json",
+  "title": "WorkerEvent",
+  "type": "object",
+  "required": ["eventType"],
+  "additionalProperties": true,
+  "properties": {
+    "eventType": { "type": "string" },
+    "itemType": { "type": "string" },
+    "itemId": { "type": "string" },
+    "itemStatus": { "type": "string" },
+    "threadId": { "type": "string" },
+    "backend": { "enum": ["codex-exec", "codex-app-server"] },
+    "summary": {},
+    "usage": {},
+    "artifactIds": { "type": "array", "items": { "type": "string" } }
+  }
+}

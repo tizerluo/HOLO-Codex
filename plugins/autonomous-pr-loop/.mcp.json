@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "autonomous-pr-loop": {
+      "cwd": ".",
+      "command": "pnpm",
+      "args": [
+        "exec",
+        "tsx",
+        "./mcp-server/src/index.ts"
+      ]
+    }
+  }
+}
