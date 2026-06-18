@@ -1,13 +1,13 @@
 # HOLO-Codex Local Release Readiness Checklist
 
-This checklist prepares HOLO-Codex for day-to-day use through a local path global install. It does not publish the package to npm and does not define a future package-manager story.
+This checklist prepares HOLO-Codex for day-to-day use through the public GitHub source checkout and a local path global install. It does not publish the package to npm.
 
 ## Fresh Machine Setup
 
 Run these steps from the plugin repository:
 
 ```bash
-git clone https://github.com/OWNER/HOLO-Codex.git
+git clone https://github.com/tizerluo/HOLO-Codex.git
 cd HOLO-Codex
 pnpm install
 pnpm build:hooks

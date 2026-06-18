@@ -1,17 +1,17 @@
 {
   "name": "autonomous-pr-loop",
   "version": "0.1.0",
-  "description": "Human On Loop Codex supervisor workflow for recoverable pull request delivery.",
+  "description": "Human On Loop Codex control plane for observable, recoverable Codex workflow loops.",
   "skills": "./skills/",
   "interface": {
     "displayName": "HOLO-Codex",
-    "shortDescription": "Supervise recoverable PR delivery with a Human On Loop workflow.",
-    "longDescription": "A portable Codex plugin for repository initialization, shared state storage, policy gates, workflow evidence, and PR delivery supervision.",
-    "developerName": "6tizer",
+    "shortDescription": "Turn long-running Codex workflows into observable Human On Loop systems.",
+    "longDescription": "A portable Codex plugin for durable workflow state, gates, evidence, hooks, worker orchestration, and the first bundled PR delivery workflow.",
+    "developerName": "tizerluo",
     "category": "Engineering",
     "capabilities": ["Write"],
     "defaultPrompt": ["进入 HOLO-Codex，继续跑到 gate"],
-    "screenshots": [],
+    "screenshots": ["../../../assets/brand/holo-codex-plugin-card.png"],
     "brandColor": "#2563EB"
   }
 }
