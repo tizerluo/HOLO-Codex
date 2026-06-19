@@ -89,6 +89,20 @@ jobs:
             echo "Tag must look like v<semver>. Got: $tag" >&2
             exit 1
           fi
+          npm_version_status() {
+            local status
+            for attempt in 1 2 3; do
+              status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION" || printf "000")"
+              if [ "$status" = "200" ] || [ "$status" = "404" ]; then
+                printf "%s" "$status"
+                return
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 5
+              fi
+            done
+            printf "%s" "$status"
+          }
           tag_exists=0
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
             tag_exists=1
@@ -99,7 +113,7 @@ jobs:
           elif [ "$tag_exists" -eq 1 ]; then
             echo "Dry run: tag already exists and would block a real release: $tag"
           fi
-          npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION")"
+          npm_status="$(npm_version_status)"
           if [ "$npm_status" = "200" ] && [ "$DRY_RUN" != "true" ]; then
             echo "npm version already exists: holo-codex@$VERSION" >&2
             cat /tmp/npm-version.json >&2
@@ -256,11 +270,25 @@ jobs:
         run: |
           set -euo pipefail
           test -f "release-candidate/$TGZ"
+          npm_version_status() {
+            local status
+            for attempt in 1 2 3; do
+              status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION" || printf "000")"
+              if [ "$status" = "200" ] || [ "$status" = "404" ]; then
+                printf "%s" "$status"
+                return
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 5
+              fi
+            done
+            printf "%s" "$status"
+          }
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "Tag already exists: $TAG" >&2
             exit 1
           fi
-          npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION")"
+          npm_status="$(npm_version_status)"
           if [ "$npm_status" = "200" ]; then
             echo "npm version already exists: holo-codex@$VERSION" >&2
             cat /tmp/npm-version.json >&2
@@ -307,7 +335,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..12}; do
-            npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION")"
+            npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION" || printf "000")"
             if [ "$npm_status" = "200" ]; then
               cat /tmp/npm-version.json
               break
