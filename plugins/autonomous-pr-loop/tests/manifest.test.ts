@@ -96,18 +96,22 @@ describe("plugin metadata", () => {
     });
   });
 
-  it("bundled hooks config uses the Codex plugin hooks schema", () => {
+  it("bundled hooks config uses an empty Codex plugin hooks schema", () => {
     const hooksConfig = readJson("plugins/autonomous-pr-loop/hooks/hooks.json");
 
     expect(isRecord(hooksConfig)).toBe(true);
     if (!isRecord(hooksConfig)) return;
-    expect(isRecord(hooksConfig.hooks)).toBe(true);
+    const hooks = hooksConfig.hooks;
+    expect(isRecord(hooks)).toBe(true);
+    if (!isRecord(hooks)) return;
     for (const event of codexHookEvents) {
       expect(hooksConfig).not.toHaveProperty(event);
-      expect(hooksConfig.hooks).toHaveProperty(event);
+      expect(hooks).not.toHaveProperty(event);
     }
     expect(Object.keys(hooksConfig).sort()).toEqual(["hooks"]);
-    expect(JSON.stringify(hooksConfig)).toContain("${PLUGIN_ROOT}/hooks/dist/pre-tool-use.js");
+    expect(Object.keys(hooks).sort()).toEqual([]);
+    expect(JSON.stringify(hooksConfig)).not.toContain("${PLUGIN_ROOT}");
+    expect(JSON.stringify(hooksConfig)).not.toContain("hooks/dist/");
     expect(JSON.stringify(hooksConfig)).not.toContain("node ./hooks/dist/");
   });
 

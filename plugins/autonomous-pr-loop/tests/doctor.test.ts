@@ -169,6 +169,8 @@ describe("agent-loop CLI", () => {
     expect(hookCheck?.message).toContain("old private repo");
     expect(hookCheck?.details?.legacyPrivateRepoCommands).toEqual([]);
     expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences).toHaveLength(1);
+    expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences?.[0]).toContain("<legacy-private-repo-path>");
+    expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences?.[0]).not.toContain("/Users/mac-mini");
   });
 
   it("doctor reports invalid hook binding registry as a warning instead of crashing", async () => {

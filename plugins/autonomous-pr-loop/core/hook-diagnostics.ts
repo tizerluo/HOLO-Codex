@@ -101,7 +101,7 @@ export function commandsReferencingLegacyPrivateRepo(commands: string[]): string
 }
 
 export function redactDiagnosticText(value: string): string {
-  return redactSecrets(value);
+  return redactLegacyPrivateRepoPaths(redactSecrets(value));
 }
 
 function firstPathBinary(name: string): string | undefined {
@@ -115,4 +115,17 @@ function firstPathBinary(name: string): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function redactLegacyPrivateRepoPaths(value: string): string {
+  const marker = escapeRegExp(LEGACY_PRIVATE_REPO_MARKER);
+  const unixPath = new RegExp(`(?:/[^\\s'"=]+)*/${marker}(?:/[^\\s'"]*)?`, "g");
+  const windowsPath = new RegExp(`(?:[A-Za-z]:\\\\[^\\s'"=]+\\\\)*${marker}(?:\\\\[^\\s'"]*)?`, "g");
+  return value
+    .replace(unixPath, "<legacy-private-repo-path>")
+    .replace(windowsPath, "<legacy-private-repo-path>");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

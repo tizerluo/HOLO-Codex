@@ -1368,7 +1368,7 @@ exit 0
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(join(codexHome, "hooks.json"), `${JSON.stringify({
       hooks: {
-        PreToolUse: [{ hooks: [{ type: "command", command: "TOKEN=ghp_123456789012345678901234567890123456 node '/Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
+        PreToolUse: [{ hooks: [{ type: "command", command: "node '/Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
       }
     }, null, 2)}\n`);
     const oldCodexHome = process.env.CODEX_HOME;
@@ -1389,7 +1389,8 @@ exit 0
 
     expect(payload.bundledHooksConfig.valid).toBe(true);
     expect(payload.legacyPrivateRepoCommands).toHaveLength(1);
-    expect(JSON.stringify(payload)).not.toContain("ghp_123456789012345678901234567890123456");
+    expect(payload.legacyPrivateRepoCommands[0]).toContain("<legacy-private-repo-path>");
+    expect(payload.legacyPrivateRepoCommands[0]).not.toContain("/Users/mac-mini");
     expect(payload.agentLoopBinary.legacyPrivateRepoReferences).toEqual(expect.any(Array));
     expect(human).toContain("bundled hooks config: valid");
     expect(human).toContain("old private repo hook refs: 1");
