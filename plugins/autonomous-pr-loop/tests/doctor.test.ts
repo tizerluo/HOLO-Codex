@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAgentLoopCli } from "../core/cli.js";
+import { inspectAgentLoopBinary } from "../core/hook-diagnostics.js";
 import { cleanupTempRepos, tempRepo } from "./helpers.js";
 
 describe("agent-loop CLI", () => {
@@ -171,6 +172,27 @@ describe("agent-loop CLI", () => {
     expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences).toHaveLength(1);
     expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences?.[0]).toContain("<legacy-private-repo-path>");
     expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences?.[0]).not.toContain("/Users/mac-mini");
+  });
+
+  it("agent-loop binary inspection reads only a bounded prefix", () => {
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-large-binary-bin-"));
+    writeFileSync(
+      join(fakeBinDir, "agent-loop"),
+      `#!/bin/sh\n${"x".repeat(140 * 1024)}\nnode /Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/bin/agent-loop.mjs "$@"\n`,
+      { mode: 0o755 }
+    );
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
+
+    let result: ReturnType<typeof inspectAgentLoopBinary>;
+    try {
+      result = inspectAgentLoopBinary("/expected/package");
+    } finally {
+      process.env.PATH = oldPath;
+    }
+
+    expect(result.readTruncated).toBe(true);
+    expect(result.legacyPrivateRepoReferences).toEqual([]);
   });
 
   it("doctor reports invalid hook binding registry as a warning instead of crashing", async () => {

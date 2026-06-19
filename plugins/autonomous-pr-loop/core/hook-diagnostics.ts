@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { CODEX_HOOK_EVENTS } from "./hook-events.js";
 import { redactSecrets } from "./redaction.js";
 
 export const LEGACY_PRIVATE_REPO_MARKER = "codex-auto-PR-loop-plusin";
+const BINARY_READ_LIMIT_BYTES = 128 * 1024;
 
 export interface BundledHooksConfigInspection {
   path: string;
@@ -21,6 +22,7 @@ export interface AgentLoopBinaryInspection {
   referencesExpectedPackage: boolean;
   legacyPrivateRepoReferences: string[];
   readError?: string;
+  readTruncated?: boolean;
 }
 
 /** Inspect the plugin-bundled Codex hooks config without mutating plugin cache or user config. */
@@ -70,9 +72,12 @@ export function inspectAgentLoopBinary(expectedPackageRoot: string): AgentLoopBi
   const realPath = path && existsSync(path) ? realpathSync(path) : undefined;
   let text = "";
   let readError: string | undefined;
+  let readTruncated = false;
   if (path && existsSync(path)) {
     try {
-      text = readFileSync(path, "utf8");
+      const result = readTextPrefix(path, BINARY_READ_LIMIT_BYTES);
+      text = result.text;
+      readTruncated = result.truncated;
     } catch (error) {
       readError = error instanceof Error ? error.message : String(error);
     }
@@ -90,7 +95,8 @@ export function inspectAgentLoopBinary(expectedPackageRoot: string): AgentLoopBi
     pointsToExpectedPackage: (realPath ? realPath.startsWith(expectedPackageRoot) : false) || referencesExpectedPackage,
     referencesExpectedPackage,
     legacyPrivateRepoReferences,
-    ...(readError ? { readError } : {})
+    ...(readError ? { readError } : {}),
+    ...(readTruncated ? { readTruncated } : {})
   };
 }
 
@@ -128,4 +134,20 @@ function redactLegacyPrivateRepoPaths(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readTextPrefix(path: string, limitBytes: number): { text: string; truncated: boolean } {
+  const size = statSync(path).size;
+  const length = Math.min(size, limitBytes);
+  const buffer = Buffer.alloc(length);
+  const fd = openSync(path, "r");
+  try {
+    const bytesRead = readSync(fd, buffer, 0, length, 0);
+    return {
+      text: buffer.subarray(0, bytesRead).toString("utf8"),
+      truncated: size > bytesRead
+    };
+  } finally {
+    closeSync(fd);
+  }
 }

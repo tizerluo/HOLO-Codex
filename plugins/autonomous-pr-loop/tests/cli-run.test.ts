@@ -1365,14 +1365,18 @@ exit 0
   it("hooks doctor reports bundled hook schema and old private repo references", async () => {
     const repoRoot = tempRepo("agent-loop-hooks-doctor-diagnostics-");
     const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-hooks-doctor-diagnostics-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-hooks-doctor-bin-"));
     mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(fakeBinDir, "agent-loop"), "#!/bin/sh\necho agent-loop clean test shim\n", { mode: 0o755 });
     writeFileSync(join(codexHome, "hooks.json"), `${JSON.stringify({
       hooks: {
         PreToolUse: [{ hooks: [{ type: "command", command: "node '/Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
       }
     }, null, 2)}\n`);
     const oldCodexHome = process.env.CODEX_HOME;
+    const oldPath = process.env.PATH;
     process.env.CODEX_HOME = codexHome;
+    process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
 
     let payload: {
       bundledHooksConfig: { valid: boolean };
@@ -1385,6 +1389,7 @@ exit 0
       human = (await runAgentLoopCli(["hooks", "doctor", "--repo", repoRoot], repoRoot)).stdout;
     } finally {
       process.env.CODEX_HOME = oldCodexHome;
+      process.env.PATH = oldPath;
     }
 
     expect(payload.bundledHooksConfig.valid).toBe(true);

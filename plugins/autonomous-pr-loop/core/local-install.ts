@@ -93,6 +93,7 @@ export interface LocalDoctorReport {
     referencesExpectedPackage: boolean;
     legacyPrivateRepoReferences: string[];
     readError?: string;
+    readTruncated?: boolean;
   };
   hooks: {
     hooksPath: string;
