@@ -1,6 +1,6 @@
 # HOLO-Codex npm Release Checklist
 
-Use this checklist for npm releases such as `v0.1.0`.
+Use this checklist for npm releases such as `v0.1.1`. Replace `VERSION` with the package version being released.
 
 The public source release remains available at `https://github.com/tizerluo/HOLO-Codex`. The npm package is `holo-codex` and installs the stable `agent-loop` CLI. Compatibility identifiers remain unchanged: `agent-loop`, `.agent-loop/`, `autonomous-pr-loop`, and `plugins/autonomous-pr-loop/`.
 
@@ -33,20 +33,22 @@ Expected result: no real tokens, no committed `.agent-loop/`, no raw hook payloa
 ## Tarball Smoke
 
 ```bash
-npm pack --ignore-scripts --json
+pack_json="$(npm pack --ignore-scripts --json)"
+tgz="$(node -e 'const fs = require("fs"); const pack = JSON.parse(fs.readFileSync(0, "utf8")); console.log(pack[0].filename)' <<< "$pack_json")"
+tar -xOf "$tgz" package/plugins/autonomous-pr-loop/hooks/hooks.json
 tmp="$(mktemp -d)"
 export CODEX_HOME="$tmp/codex-home"
 mkdir -p "$tmp/target-repo"
 git -C "$tmp/target-repo" init -b main
 git -C "$tmp/target-repo" remote add origin https://github.com/example/holo-codex-smoke.git
-npm install --prefix "$tmp/install" ./holo-codex-*.tgz
+npm install --prefix "$tmp/install" "./$tgz"
 "$tmp/install/node_modules/.bin/agent-loop" --help
 "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" init --json
 "$tmp/install/node_modules/.bin/agent-loop" install-hooks --repo "$tmp/target-repo" --json
 "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" local doctor --json
 ```
 
-Do not publish if this smoke fails.
+The extracted `hooks.json` must have a top-level `hooks` object and must not have legacy top-level hook event keys such as `PreToolUse`. Do not publish if this smoke fails.
 
 ## Publish
 
@@ -126,11 +128,12 @@ Expected result: hooks and binding registry restore from the snapshot, non-agent
 After publish and post-publish smoke pass:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
-gh release create v0.1.0 \
+VERSION=0.1.1
+git tag "v$VERSION"
+git push origin "v$VERSION"
+gh release create "v$VERSION" \
   --repo tizerluo/HOLO-Codex \
-  --title "HOLO-Codex v0.1.0" \
+  --title "HOLO-Codex v$VERSION" \
   --notes-file /path/to/release-notes.md
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "holo-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Human On Loop Codex control plane for observable, recoverable Codex workflow loops.",
   "license": "MIT",
   "author": "tizerluo",
@@ -28,6 +28,7 @@
   "files": [
     "README.md",
     "README.zh-CN.md",
+    "CHANGELOG.md",
     "LICENSE",
     "SECURITY.md",
     "CONTRIBUTING.md",
