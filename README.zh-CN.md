@@ -30,7 +30,7 @@ HOLO-Codex 是公开产品名。一些稳定运行时标识会继续保留旧名
 - 运行态目录：`.agent-loop/`
 - Plugin id 和 MCP server id：`autonomous-pr-loop`
 - 源码目录：`plugins/autonomous-pr-loop/`
-- 根 package 名：`codex-auto-pr-loop-plugin`
+- npm package 名：`holo-codex`
 - 本地 marketplace 条目名：`codex-auto-pr-loop`
 
 这些是兼容标识，不是第二个产品名。
@@ -70,13 +70,25 @@ https://github.com/tizerluo/HOLO-Codex
 依赖：
 
 - Node.js `>=22.5`
-- `pnpm`
 - `git`
 - GitHub CLI `gh`
 - Codex CLI / plugin support
+- 从源码安装或使用 snapshot/rollback local install 时需要 `pnpm`
 - 可选但推荐：GitNexus，使用 `npx gitnexus`
 
-从源码安装：
+从 npm 安装：
+
+```bash
+npm install --global holo-codex
+# 将 /path/to/repo 替换成你要让 HOLO-Codex 监督的目标仓库。
+agent-loop --repo /path/to/repo init
+agent-loop install-hooks --repo /path/to/repo
+agent-loop --repo /path/to/repo doctor
+```
+
+npm package 会安装 `agent-loop` CLI。`agent-loop install-hooks` 会安装或刷新 hook router 和目标仓库绑定，不会重新安装全局 CLI。移除 npm 安装时，先运行 `agent-loop hooks unbind --repo /path/to/repo`；确认没有任何目标仓库还在使用 HOLO-Codex router 后，再从 `~/.codex/hooks.json` 手动移除 HOLO-Codex router entries，最后运行 `npm uninstall --global holo-codex`。
+
+开发 HOLO-Codex 或需要直接检查源码 checkout 时，从源码安装：
 
 ```bash
 git clone https://github.com/tizerluo/HOLO-Codex.git
@@ -88,13 +100,17 @@ pnpm agent-loop local install --repo /path/to/repo
 agent-loop --repo /path/to/repo status
 ```
 
-`pnpm agent-loop ...` 是源码 checkout 内的命令。`agent-loop ...` 是本地安装后从任意目录日常使用的全局命令。当前 release 的公开分发路径是 source/local install；npm 尚未发布。
-
-`agent-loop local install` 会先 snapshot Codex hooks 状态，再安装全局 CLI 和 hook router，并打印对应 rollback 命令。用 `agent-loop local snapshots prune --keep 10` 预览旧 snapshot 清理；确认要删除时再加 `--apply`。
+`pnpm agent-loop ...` 是源码 checkout 内的命令。`agent-loop ...` 是 npm 或本地源码安装后从任意目录日常使用的全局命令。用 `agent-loop local snapshots prune --keep 10` 预览旧 snapshot 清理；确认要删除时再加 `--apply`。
 
 完整的本地安装、升级、重装、卸载和 smoke test 清单见：[Local Release Readiness](./docs/local-release-readiness.md)。
 
-加入本地 Codex plugin marketplace：
+把 HOLO-Codex 加入本地 Codex plugin marketplace。npm 安装时：
+
+```bash
+codex plugin marketplace add "$(npm root -g)/holo-codex"
+```
+
+源码安装时：
 
 ```bash
 codex plugin marketplace add /path/to/HOLO-Codex

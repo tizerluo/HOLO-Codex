@@ -30,7 +30,7 @@ HOLO-Codex is the public product name. Some stable runtime identifiers intention
 - Runtime state directory: `.agent-loop/`
 - Plugin id and MCP server id: `autonomous-pr-loop`
 - Source directory: `plugins/autonomous-pr-loop/`
-- Root package name: `codex-auto-pr-loop-plugin`
+- npm package name: `holo-codex`
 - Local marketplace entry name: `codex-auto-pr-loop`
 
 Do not treat those names as a second product. They are compatibility identifiers.
@@ -70,13 +70,25 @@ https://github.com/tizerluo/HOLO-Codex
 Requirements:
 
 - Node.js `>=22.5`
-- `pnpm`
 - `git`
 - GitHub CLI `gh`
 - Codex CLI / plugin support
+- `pnpm` when installing from source or using rollback-snapshot local install
 - Optional but recommended: GitNexus via `npx gitnexus`
 
-Install from source:
+Install from npm:
+
+```bash
+npm install --global holo-codex
+# Replace /path/to/repo with the repository you want HOLO-Codex to supervise.
+agent-loop --repo /path/to/repo init
+agent-loop install-hooks --repo /path/to/repo
+agent-loop --repo /path/to/repo doctor
+```
+
+The npm package installs the `agent-loop` CLI. `agent-loop install-hooks` installs or refreshes the hook router and target binding without reinstalling the global CLI. To remove an npm install, run `agent-loop hooks unbind --repo /path/to/repo`, remove HOLO-Codex router entries from `~/.codex/hooks.json` only when no target repositories still use them, and then run `npm uninstall --global holo-codex`.
+
+Install from source when developing HOLO-Codex or when you want to inspect the source checkout directly:
 
 ```bash
 git clone https://github.com/tizerluo/HOLO-Codex.git
@@ -88,13 +100,17 @@ pnpm agent-loop local install --repo /path/to/repo
 agent-loop --repo /path/to/repo status
 ```
 
-`pnpm agent-loop ...` is the source checkout command. `agent-loop ...` is the global convenience command for day-to-day use from any directory after local install. npm publishing is not enabled yet; source/local install is the supported public distribution path for this release.
-
-`agent-loop local install` snapshots Codex hook state before installing the global CLI and hook router, then prints the matching rollback command. Use `agent-loop local snapshots prune --keep 10` to preview old snapshot cleanup, and add `--apply` only when you want to delete valid old snapshots.
+`pnpm agent-loop ...` is the source checkout command. `agent-loop ...` is the global convenience command for day-to-day use from any directory after npm or local source install. Use `agent-loop local snapshots prune --keep 10` to preview old snapshot cleanup, and add `--apply` only when you want to delete valid old snapshots.
 
 For a complete local install, upgrade, reinstall, uninstall, and smoke-test checklist, see [Local Release Readiness](./docs/local-release-readiness.md).
 
-Add this repo to the local Codex plugin marketplace:
+Add HOLO-Codex to the local Codex plugin marketplace. For npm installs:
+
+```bash
+codex plugin marketplace add "$(npm root -g)/holo-codex"
+```
+
+For source installs:
 
 ```bash
 codex plugin marketplace add /path/to/HOLO-Codex

@@ -956,6 +956,51 @@ exec "$REAL_PNPM" "$@"
     }
   }, 90_000);
 
+  it("local install skips hook build for packed packages that already contain hook dist", () => {
+    const repoRoot = tempRepo("agent-loop-local-packed-target-");
+    const packageRoot = mkdtempSync(join(tmpdir(), "agent-loop-local-packed-plugin-"));
+    const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-local-packed-home-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-local-packed-bin-"));
+    const hookDist = join(packageRoot, "plugins", "autonomous-pr-loop", "hooks", "dist");
+    mkdirSync(hookDist, { recursive: true });
+    writeFileSync(join(packageRoot, "package.json"), `${JSON.stringify({ name: "holo-codex" })}\n`);
+    for (const script of [
+      "permission-request.js",
+      "post-compact.js",
+      "post-tool-use.js",
+      "pre-compact.js",
+      "pre-tool-use.js",
+      "session-start.js",
+      "stop.js",
+      "user-prompt-submit.js"
+    ]) {
+      writeFileSync(join(hookDist, script), "console.log('hook');\n");
+    }
+    writeFileSync(join(fakeBinDir, "pnpm"), `#!/bin/sh
+if [ "$1" = "build:hooks" ]; then
+  echo "build should not run" >&2
+  exit 99
+fi
+echo "fake pnpm $@"
+exit 0
+`, { mode: 0o755 });
+    const oldCodexHome = process.env.CODEX_HOME;
+    const oldPath = process.env.PATH;
+    process.env.CODEX_HOME = codexHome;
+    process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
+    try {
+      const result = installLocalAgentLoop({ repoRoot, packageRoot, allowDirty: true });
+
+      expect(result.install.buildHooks.ok).toBe(true);
+      expect(result.install.buildHooks.stdout).toContain("Skipped hook build");
+      expect(result.install.globalInstall.ok).toBe(true);
+      expect(result.install.installHooks.ok).toBe(true);
+    } finally {
+      process.env.CODEX_HOME = oldCodexHome;
+      process.env.PATH = oldPath;
+    }
+  });
+
   it("local rollback preserves malformed current hook files before restoring snapshot", async () => {
     const repoRoot = tempRepo("agent-loop-local-rollback-broken-target-");
     const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-local-rollback-broken-home-"));
@@ -981,22 +1026,29 @@ exec "$REAL_PNPM" "$@"
     writeFileSync(hooksPath, "{not hooks json");
     writeFileSync(registryPath, "{not registry json");
     const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-local-rollback-broken-bin-"));
-    writeFileSync(join(fakeBinDir, "pnpm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const pnpmLogPath = join(fakeBinDir, "pnpm.log");
+    writeFileSync(join(fakeBinDir, "pnpm"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$PNPM_LOG\"\nexit 0\n", { mode: 0o755 });
     const oldCodexHome = process.env.CODEX_HOME;
     const oldPath = process.env.PATH;
+    const oldPnpmLog = process.env.PNPM_LOG;
     process.env.CODEX_HOME = codexHome;
     process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
+    process.env.PNPM_LOG = pnpmLogPath;
 
-    let payload: { preservedBrokenFiles: string[]; warnings: string[] };
+    let payload: { preservedBrokenFiles: string[]; warnings: string[]; globalUninstall: { command: string } };
     try {
       const result = await runAgentLoopCli(["local", "rollback", "--snapshot", snapshotPath, "--json"], repoRoot);
       payload = JSON.parse(result.stdout);
     } finally {
       process.env.CODEX_HOME = oldCodexHome;
       process.env.PATH = oldPath;
+      process.env.PNPM_LOG = oldPnpmLog;
     }
 
     expect(payload.preservedBrokenFiles).toHaveLength(2);
+    expect(payload.globalUninstall.command).toContain("'holo-codex'");
+    expect(readFileSync(pnpmLogPath, "utf8")).toContain("remove --global holo-codex");
+    expect(readFileSync(pnpmLogPath, "utf8")).toContain("remove --global codex-auto-pr-loop-plugin");
     expect(payload.preservedBrokenFiles.every((path) => existsSync(path))).toBe(true);
     expect(payload.preservedBrokenFiles.map((path) => statSync(path).mode & 0o777)).toEqual([0o600, 0o600]);
     expect(payload.warnings.join("\n")).toContain("preserved");
@@ -1066,7 +1118,24 @@ exit 0
     const repoRoot = tempRepo("agent-loop-local-pollution-target-");
     const packageRoot = mkdtempSync(join(tmpdir(), "agent-loop-local-pollution-plugin-"));
     writeFileSync(join(packageRoot, "package.json"), `${JSON.stringify({
-      name: "codex-auto-pr-loop-plugin",
+      name: "holo-codex",
+      dependencies: {
+        "holo-codex": "link:"
+      }
+    }, null, 2)}\n`);
+    writeFileSync(join(packageRoot, "pnpm-lock.yaml"), "holo-codex: link:\n");
+
+    const report = inspectLocalInstall({ repoRoot, packageRoot });
+
+    expect(report.selfLinkPollution.clean).toBe(false);
+    expect(report.selfLinkPollution.files).toEqual(expect.arrayContaining(["package.json", "pnpm-lock.yaml"]));
+  });
+
+  it("local doctor still detects legacy self-link manifest pollution", () => {
+    const repoRoot = tempRepo("agent-loop-local-legacy-pollution-target-");
+    const packageRoot = mkdtempSync(join(tmpdir(), "agent-loop-local-legacy-pollution-plugin-"));
+    writeFileSync(join(packageRoot, "package.json"), `${JSON.stringify({
+      name: "holo-codex",
       dependencies: {
         "codex-auto-pr-loop-plugin": "link:"
       }
@@ -1372,7 +1441,7 @@ exit 0
       vi.useRealTimers();
       process.env.CODEX_HOME = oldCodexHome;
     }
-  });
+  }, 90_000);
 
   it("hooks bind, list, and unbind wire session-scoped bindings through the CLI", async () => {
     const repoRoot = tempRepo("agent-loop-hooks-bind-");

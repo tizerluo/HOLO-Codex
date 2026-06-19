@@ -6,6 +6,23 @@ English: Install the local-first plugin, configure MCP/hook integration, then in
 
 See also: [README](../README.md) / [中文 README](../README.zh-CN.md) / [Local Release Readiness](./local-release-readiness.md).
 
+## npm Install
+
+```bash
+npm install --global holo-codex
+```
+
+Initialize and bind a target repository:
+
+```bash
+agent-loop --repo /path/to/repo init
+agent-loop install-hooks --repo /path/to/repo
+agent-loop --repo /path/to/repo doctor
+agent-loop --repo /path/to/repo status
+```
+
+The npm package provides the `agent-loop` CLI. `agent-loop install-hooks` installs or refreshes the hook router and target repository binding without reinstalling the global CLI. Use source `agent-loop local install` only when you want the pnpm-based snapshot/rollback install workflow.
+
 ## Source Install
 
 ```bash
@@ -27,13 +44,19 @@ pnpm agent-loop local install --repo /path/to/repo
 agent-loop --repo /path/to/repo status
 ```
 
-The canonical public source is `https://github.com/tizerluo/HOLO-Codex`. The package remains private in this phase, so source/local install is the supported public distribution path. `agent-loop local install` performs the local path global installation, snapshots Codex hook state, checks for accidental manifest churn, installs the hook router, and prints a rollback command. npm publishing is handled by later packaging work. If pnpm reports that the global bin directory is not in `PATH`, add that directory to `PATH` before installing or use a shell profile managed by `pnpm setup`.
+The canonical public source is `https://github.com/tizerluo/HOLO-Codex`. Use source install when developing HOLO-Codex, auditing the checkout, or testing local changes before a release. If pnpm reports that the global bin directory is not in `PATH`, add that directory to `PATH` before installing or use a shell profile managed by `pnpm setup`.
 
 For the full fresh-machine checklist, including MCP env, hooks, dashboard login, and smoke tests, use [Local Release Readiness](./local-release-readiness.md).
 
 ## Enable The Plugin
 
-Add the source checkout as a local Codex plugin marketplace:
+Add HOLO-Codex as a local Codex plugin marketplace. For npm installs:
+
+```bash
+codex plugin marketplace add "$(npm root -g)/holo-codex"
+```
+
+For source installs:
 
 ```bash
 codex plugin marketplace add /path/to/HOLO-Codex
@@ -131,7 +154,16 @@ agent-loop local snapshots prune --keep 10 --apply
 
 `prune` is dry-run by default. It deletes only valid old `local-install-*` snapshots when `--apply` is present; malformed snapshots are skipped with warnings.
 
-Manual fallback: remove the global CLI package with `pnpm remove --global codex-auto-pr-loop-plugin`. If the package name changes, inspect global packages with `pnpm list --global --depth 0` and remove the matching `agent-loop` provider. Hook router entries live in `~/.codex/hooks.json`; target bindings live in `~/.codex/agent-loop/hook-bindings.json` and can be removed with `agent-loop hooks unbind --repo /path/to/repo`.
+Manual fallback: remove the global CLI package with `pnpm remove --global holo-codex`. Older local installs may still appear as `codex-auto-pr-loop-plugin`; inspect global packages with `pnpm list --global --depth 0` and remove the matching `agent-loop` provider. Hook router entries live in `~/.codex/hooks.json`; target bindings live in `~/.codex/agent-loop/hook-bindings.json` and can be removed with `agent-loop hooks unbind --repo /path/to/repo`.
+
+For npm installs, remove the target binding first and then uninstall the global package:
+
+```bash
+agent-loop hooks unbind --repo /path/to/repo
+# If no target repositories still use HOLO-Codex hooks, remove the
+# HOLO-Codex router entries from ~/.codex/hooks.json before uninstalling.
+npm uninstall --global holo-codex
+```
 
 Detailed upgrade, reinstall, uninstall, and global CLI resource checks are in [Local Release Readiness](./local-release-readiness.md).
 

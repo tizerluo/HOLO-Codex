@@ -152,6 +152,14 @@ function checkHooksBuilt(packageRoot: string, targetRepoRoot: string): DoctorChe
       details: { packageRoot, distDir, missing, installCommand }
     };
   }
+  if (!existsSync(join(packageRoot, "pnpm-lock.yaml"))) {
+    return {
+      name: "codex hooks build",
+      status: "pass",
+      message: "Packaged hook runners are available.",
+      details: { packageRoot, distDir }
+    };
+  }
   const stale = CODEX_HOOK_EVENTS
     .map((event) => ({
       source: join(sourceDir, hookScriptName(event).replace(/\.js$/, ".ts")),

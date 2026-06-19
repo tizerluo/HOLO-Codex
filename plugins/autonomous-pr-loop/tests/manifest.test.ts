@@ -1,19 +1,42 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 
 describe("plugin metadata", () => {
-  it("root package exposes the local agent-loop bin while staying private", () => {
+  it("root package exposes the npm-ready agent-loop bin and runtime metadata", () => {
     const pkg = readJson("package.json");
 
     expect(pkg).toMatchObject({
-      private: true,
+      name: "holo-codex",
+      license: "MIT",
+      repository: {
+        type: "git",
+        url: "git+https://github.com/tizerluo/HOLO-Codex.git"
+      },
       bin: {
-        "agent-loop": "./plugins/autonomous-pr-loop/bin/agent-loop.mjs"
+        "agent-loop": "plugins/autonomous-pr-loop/bin/agent-loop.mjs"
+      },
+      dependencies: {
+        "lucide-react": expect.any(String),
+        react: expect.any(String),
+        "react-dom": expect.any(String),
+        tsx: expect.any(String),
+        vite: expect.any(String)
       }
     });
+    expect((pkg as { private?: unknown }).private).toBeUndefined();
+    expect((pkg as { files?: unknown }).files).toEqual(expect.arrayContaining([
+      "plugins/autonomous-pr-loop/core/",
+      "plugins/autonomous-pr-loop/hooks/",
+      "plugins/autonomous-pr-loop/ui/",
+      "plugins/autonomous-pr-loop/schemas/",
+      "plugins/autonomous-pr-loop/.codex-plugin/",
+      "docs/install.md"
+    ]));
   });
 
   it("plugin.json matches the measured Codex plugin shape", () => {
@@ -61,6 +84,75 @@ describe("plugin metadata", () => {
         }
       ]
     });
+  });
+
+  it("npm pack dry-run keeps required runtime files and excludes private/dev files", () => {
+    const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 20
+    }))[0] as { name: string; files: Array<{ path: string }> };
+    const paths = packed.files.map((file) => file.path).sort();
+
+    expect(packed.name).toBe("holo-codex");
+    expect(paths).toEqual(expect.arrayContaining([
+      "package.json",
+      "plugins/autonomous-pr-loop/bin/agent-loop.mjs",
+      "plugins/autonomous-pr-loop/core/cli.ts",
+      "plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js",
+      "plugins/autonomous-pr-loop/ui/index.html",
+      "plugins/autonomous-pr-loop/ui/src/main.tsx",
+      "plugins/autonomous-pr-loop/schemas/config.schema.json",
+      "plugins/autonomous-pr-loop/.codex-plugin/plugin.json",
+      "plugins/autonomous-pr-loop/mcp-server/src/index.ts",
+      "plugins/autonomous-pr-loop/skills/autonomous-pr-loop/SKILL.md",
+      "docs/install.md",
+      "assets/brand/holo-codex-plugin-card.png"
+    ]));
+    for (const path of paths) {
+      expect(path).not.toMatch(/^plugins\/autonomous-pr-loop\/tests\//);
+      expect(path).not.toMatch(/^docs\/(plans|specs|research|logseq|pages|journals)\//);
+      expect(path).not.toMatch(/^\.agent-loop\//);
+      expect(path).not.toBe("AGENTS.md");
+      expect(path).not.toBe("CLAUDE.md");
+      expect(path).not.toBe("HANDOFF.md");
+      expect(path).not.toBe("vitest.config.ts");
+      expect(path).not.toMatch(/^\.github\//);
+    }
+  });
+
+  it("committed hook dist matches the current hook sources", () => {
+    const outdir = mkdtempSync(join(tmpdir(), "agent-loop-hook-dist-"));
+    const entries = [
+      "plugins/autonomous-pr-loop/hooks/pre-tool-use.ts",
+      "plugins/autonomous-pr-loop/hooks/post-tool-use.ts",
+      "plugins/autonomous-pr-loop/hooks/user-prompt-submit.ts",
+      "plugins/autonomous-pr-loop/hooks/stop.ts",
+      "plugins/autonomous-pr-loop/hooks/session-start.ts",
+      "plugins/autonomous-pr-loop/hooks/pre-compact.ts",
+      "plugins/autonomous-pr-loop/hooks/post-compact.ts",
+      "plugins/autonomous-pr-loop/hooks/permission-request.ts"
+    ];
+
+    try {
+      execFileSync("pnpm", [
+        "exec",
+        "esbuild",
+        ...entries,
+        "--bundle",
+        "--platform=node",
+        "--format=esm",
+        `--outdir=${outdir}`
+      ], { cwd: repoRoot, stdio: "ignore" });
+
+      for (const entry of entries) {
+        const fileName = entry.replace(/^.*\//, "").replace(/\.ts$/, ".js");
+        expect(readFileSync(resolve(repoRoot, "plugins/autonomous-pr-loop/hooks/dist", fileName), "utf8"))
+          .toBe(readFileSync(join(outdir, fileName), "utf8"));
+      }
+    } finally {
+      rmSync(outdir, { recursive: true, force: true });
+    }
   });
 });
 

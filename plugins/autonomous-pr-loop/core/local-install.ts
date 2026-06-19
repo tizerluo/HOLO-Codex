@@ -7,9 +7,9 @@ import { runCommand } from "./command.js";
 import { isRecord } from "./config.js";
 import { AgentLoopError } from "./errors.js";
 import { agentLoopRouterHookCommand, collectHookCommands, isLegacyAgentLoopHookCommand } from "./hook-installation.js";
-import { CODEX_HOOK_EVENTS } from "./hook-events.js";
+import { CODEX_HOOK_EVENTS, hookScriptName } from "./hook-events.js";
 import { hookRegistryPath, inspectHookRegistryLock, listHookBindings } from "./hook-router.js";
-import { defaultPackageRoot, hookDistRoot } from "./plugin-paths.js";
+import { defaultPackageRoot, hookDistRoot, hookSourceRoot } from "./plugin-paths.js";
 
 export interface LocalInstallOptions {
   repoRoot: string;
@@ -137,6 +137,8 @@ export interface CommandSummary {
 
 type HookBindingRegistryJson = { version: 1; bindings: unknown[] };
 type ManifestSnapshot = Map<string, { hash?: string; content?: Buffer }>;
+const LEGACY_NPM_PACKAGE_NAME = "codex-auto-pr-loop-plugin";
+const FALLBACK_NPM_PACKAGE_NAME = "holo-codex";
 
 /** Install the local agent-loop CLI and hook router with a reversible snapshot. */
 export function installLocalAgentLoop(options: LocalInstallOptions): LocalInstallResult {
@@ -151,7 +153,7 @@ export function installLocalAgentLoop(options: LocalInstallOptions): LocalInstal
 
   const beforeManifests = manifestSnapshots(packageRoot);
   const snapshotPath = createLocalInstallSnapshot({ packageRoot, repoRoot });
-  const buildHooks = runCommandSummary("pnpm", ["build:hooks"], packageRoot);
+  const buildHooks = buildHooksForLocalInstall(packageRoot);
   if (!buildHooks.ok) {
     throw localInstallFailure(`Failed to build hooks before local install.\n${buildHooks.stderr ?? buildHooks.stdout ?? ""}`, snapshotPath);
   }
@@ -193,6 +195,28 @@ export function installLocalAgentLoop(options: LocalInstallOptions): LocalInstal
   };
 }
 
+function buildHooksForLocalInstall(packageRoot: string): CommandSummary {
+  const distReady = CODEX_HOOK_EVENTS
+    .map((event) => join(hookDistRoot(packageRoot), hookScriptName(event)))
+    .every((script) => existsSync(script));
+  const sourceCheckout = existsSync(join(packageRoot, "pnpm-lock.yaml"));
+  if (distReady && !sourceCheckout) {
+    return {
+      ok: true,
+      command: `pnpm build:hooks`,
+      stdout: "Skipped hook build because packaged hook dist is already present."
+    };
+  }
+  if (!existsSync(hookSourceRoot(packageRoot)) && distReady) {
+    return {
+      ok: true,
+      command: `pnpm build:hooks`,
+      stdout: "Skipped hook build because hook sources are unavailable and packaged hook dist is present."
+    };
+  }
+  return runCommandSummary("pnpm", ["build:hooks"], packageRoot);
+}
+
 /** Restore hook/router state from a local-install snapshot and remove the global CLI link. */
 export function rollbackLocalAgentLoop(options: LocalRollbackOptions): LocalRollbackResult {
   const packageRoot = options.packageRoot ?? defaultPackageRoot();
@@ -222,9 +246,13 @@ export function rollbackLocalAgentLoop(options: LocalRollbackOptions): LocalRoll
     }
   }
 
-  const globalUninstall = runCommandSummary("pnpm", ["remove", "--global", "codex-auto-pr-loop-plugin"], homedir());
+  const packageName = localPackageName(packageRoot);
+  const globalUninstall = runCommandSummary("pnpm", ["remove", "--global", packageName], homedir());
   if (!globalUninstall.ok) {
     warnings.push("Global CLI uninstall did not complete; inspect `pnpm list --global --depth 0` manually.");
+  }
+  if (packageName !== LEGACY_NPM_PACKAGE_NAME) {
+    runCommandSummary("pnpm", ["remove", "--global", LEGACY_NPM_PACKAGE_NAME], homedir());
   }
 
   return {
@@ -610,6 +638,7 @@ function inspectBindings(codexHome: string, repoRoot: string): LocalDoctorReport
 
 function detectSelfLinkPollution(packageRoot: string): LocalDoctorReport["selfLinkPollution"] {
   const polluted = new Set<string>();
+  const packageNames = new Set([localPackageName(packageRoot), LEGACY_NPM_PACKAGE_NAME]);
   const packageJsonPath = join(packageRoot, "package.json");
   if (existsSync(packageJsonPath)) {
     const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
@@ -618,18 +647,39 @@ function detectSelfLinkPollution(packageRoot: string): LocalDoctorReport["selfLi
       optionalDependencies?: Record<string, string>;
     };
     for (const deps of [parsed.dependencies, parsed.devDependencies, parsed.optionalDependencies]) {
-      if (deps?.["codex-auto-pr-loop-plugin"]?.startsWith("link:")) {
-        polluted.add("package.json");
+      for (const packageName of packageNames) {
+        if (deps?.[packageName]?.startsWith("link:")) {
+          polluted.add("package.json");
+        }
       }
     }
   }
   for (const file of ["pnpm-lock.yaml", "pnpm-workspace.yaml"]) {
     const path = join(packageRoot, file);
-    if (existsSync(path) && /codex-auto-pr-loop-plugin:\s*link:/.test(readFileSync(path, "utf8"))) {
-      polluted.add(file);
+    if (!existsSync(path)) {
+      continue;
+    }
+    const content = readFileSync(path, "utf8");
+    for (const packageName of packageNames) {
+      if (new RegExp(`${escapeRegExp(packageName)}:\\s*link:`).test(content)) {
+        polluted.add(file);
+      }
     }
   }
   return { clean: polluted.size === 0, files: [...polluted] };
+}
+
+function localPackageName(packageRoot: string): string {
+  try {
+    const parsed = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { name?: unknown };
+    return typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : FALLBACK_NPM_PACKAGE_NAME;
+  } catch {
+    return FALLBACK_NPM_PACKAGE_NAME;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function manifestSnapshots(packageRoot: string): ManifestSnapshot {

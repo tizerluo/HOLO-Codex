@@ -2,6 +2,8 @@
 **/.DS_Store
 node_modules/
 dist/
+!plugins/autonomous-pr-loop/hooks/dist/
+!plugins/autonomous-pr-loop/hooks/dist/*.js
 coverage/
 .env
 .env.*

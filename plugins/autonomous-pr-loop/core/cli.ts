@@ -835,7 +835,15 @@ function installRouterHooks(packageRoot: string): { hooksPath: string; removedLe
 
 function buildHookDist(pluginRootPath: string): void {
   const hookSource = join(hookSourceRoot(pluginRootPath), "pre-tool-use.ts");
+  const distScripts = agentLoopHookDistScripts(pluginRootPath);
+  const distReady = distScripts.every((script) => existsSync(script));
+  if (distReady && !existsSync(join(pluginRootPath, "pnpm-lock.yaml"))) {
+    return;
+  }
   if (!existsSync(hookSource)) {
+    if (distReady) {
+      return;
+    }
     throw new AgentLoopError("required_tool_unavailable", "agent-loop hook sources are missing in this repository.", {
       details: { hookSource },
       exitCode: 2
@@ -855,6 +863,14 @@ function buildHookDist(pluginRootPath: string): void {
       exitCode: 2
     });
   }
+}
+
+function agentLoopHookDistScripts(pluginRootPath: string): string[] {
+  const distRoot = join(hookSourceRoot(pluginRootPath), "dist");
+  return Object.values(agentLoopRouterHookEntries(pluginRootPath))
+    .flatMap(collectHookCommands)
+    .map((command) => command.match(/node '([^']+)'/)?.[1])
+    .filter((script): script is string => typeof script === "string" && script.startsWith(distRoot));
 }
 
 function approveGate(repoRoot: string, args: string[], json: boolean, localeOverride: LocaleSetting | undefined): CliResult {

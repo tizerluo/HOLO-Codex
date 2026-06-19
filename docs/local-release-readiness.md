@@ -1,10 +1,20 @@
 # HOLO-Codex Local Release Readiness Checklist
 
-This checklist prepares HOLO-Codex for day-to-day use through the public GitHub source checkout and a local path global install. It does not publish the package to npm.
+This checklist prepares HOLO-Codex for day-to-day use through the published npm package or the public GitHub source checkout.
 
 ## Fresh Machine Setup
 
-Run these steps from the plugin repository:
+Install from npm:
+
+```bash
+npm install --global holo-codex
+agent-loop --help
+agent-loop --repo /path/to/target-repo init
+agent-loop install-hooks --repo /path/to/target-repo
+agent-loop --repo /path/to/target-repo doctor
+```
+
+Use the source checkout when developing or auditing the release:
 
 ```bash
 git clone https://github.com/tizerluo/HOLO-Codex.git
@@ -15,9 +25,15 @@ pnpm agent-loop local install --repo /path/to/target-repo
 agent-loop --help
 ```
 
-`agent-loop local install` snapshots `~/.codex/hooks.json` and `~/.codex/agent-loop/hook-bindings.json`, installs the global CLI, installs or migrates router hooks, binds the target repo, checks for accidental manifest churn, and prints the rollback command. If pnpm reports that the configured global bin directory is not in `PATH`, add that directory to `PATH` before installing or run `pnpm setup` for your shell.
+For npm installs, `agent-loop install-hooks` installs or migrates router hooks and binds the target repo without reinstalling the global CLI. For source installs, `agent-loop local install` snapshots `~/.codex/hooks.json` and `~/.codex/agent-loop/hook-bindings.json`, installs the global CLI, installs or migrates router hooks, binds the target repo, checks for accidental manifest churn, and prints the rollback command. If pnpm reports that the configured global bin directory is not in `PATH`, add that directory to `PATH` before source local install or run `pnpm setup` for your shell.
 
-Enable the local Codex plugin separately from the global CLI install:
+Enable the local Codex plugin separately from the global CLI install. For npm installs:
+
+```bash
+codex plugin marketplace add "$(npm root -g)/holo-codex"
+```
+
+For source installs:
 
 ```bash
 codex plugin marketplace add /path/to/HOLO-Codex
@@ -55,7 +71,16 @@ Runtime state is written to the target repository's `.agent-loop/` directory. Do
 
 ## Upgrade Or Reinstall
 
-Use this sequence when the plugin repository changes:
+For npm installs:
+
+```bash
+npm update --global holo-codex
+agent-loop install-hooks --repo /path/to/target-repo
+agent-loop --repo /path/to/target-repo doctor
+agent-loop --repo /path/to/target-repo status
+```
+
+For source checkouts:
 
 ```bash
 cd /path/to/HOLO-Codex
@@ -78,7 +103,17 @@ agent-loop install-hooks --repo /path/to/target-repo
 
 ## Uninstall Global CLI
 
-Remove only the global shell command:
+For npm installs:
+
+```bash
+agent-loop hooks unbind --repo /path/to/target-repo
+# If no target repositories still use HOLO-Codex hooks, remove the
+# HOLO-Codex router entries from ~/.codex/hooks.json before uninstalling.
+npm uninstall --global holo-codex
+```
+
+For source local installs, use the rollback snapshot printed by install:
+
 
 ```bash
 agent-loop local rollback --snapshot /path/to/snapshot
@@ -96,12 +131,14 @@ agent-loop local snapshots prune --keep 10 --apply
 
 `local snapshots prune` is a dry-run unless `--apply` is present. It skips malformed snapshots and reports warnings instead of deleting them.
 
-Manual fallback: if pnpm reports the package name differently or rollback cannot remove the global command, inspect global packages and remove the matching `agent-loop` provider:
+Manual source fallback: if pnpm reports the package name differently or rollback cannot remove the global command, inspect global packages and remove the matching `agent-loop` provider:
 
 ```bash
 pnpm list --global --depth 0
-pnpm remove --global codex-auto-pr-loop-plugin
+pnpm remove --global holo-codex
 ```
+
+Older local source installs may still be listed as `codex-auto-pr-loop-plugin`; remove that package name when it is the provider shown by `pnpm list --global --depth 0`.
 
 Remove a target binding when that repository should no longer participate in the Codex hook loop:
 
@@ -163,7 +200,6 @@ MCP smoke:
 
 ## Out Of Scope
 
-- npm publishing.
 - automatic upgrade or uninstall scripts.
 - shell completion.
 - hosted service, daemon, or GitHub webhooks.
