@@ -56,7 +56,7 @@ describe("plugin metadata", () => {
     expect(validateSchema(schema, plugin)).toEqual([]);
     expect(plugin).toMatchObject({
       name: "autonomous-pr-loop",
-      version: "0.1.0",
+      version: "0.1.1",
       skills: "./skills/",
       interface: {
         displayName: "HOLO-Codex",

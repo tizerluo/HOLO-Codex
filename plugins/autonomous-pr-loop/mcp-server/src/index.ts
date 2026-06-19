@@ -35,7 +35,7 @@ async function handleLine(line: string): Promise<void> {
       respond(request.id, {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "autonomous-pr-loop", version: "0.1.0" }
+        serverInfo: { name: "autonomous-pr-loop", version: "0.1.1" }
       });
       return;
     }

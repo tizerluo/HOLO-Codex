@@ -36,6 +36,7 @@ Expected result: no real tokens, no committed `.agent-loop/`, no raw hook payloa
 pack_json="$(npm pack --ignore-scripts --json)"
 tgz="$(node -e 'const fs = require("fs"); const pack = JSON.parse(fs.readFileSync(0, "utf8")); console.log(pack[0].filename)' <<< "$pack_json")"
 tar -xOf "$tgz" package/plugins/autonomous-pr-loop/hooks/hooks.json
+tar -xOf "$tgz" package/plugins/autonomous-pr-loop/hooks/hooks.json | node -e 'const fs = require("fs"); const hooks = JSON.parse(fs.readFileSync(0, "utf8")); const legacy = Object.keys(hooks).filter((key) => key !== "hooks"); if (!hooks.hooks || typeof hooks.hooks !== "object" || legacy.length) { console.error(JSON.stringify({ legacy }, null, 2)); process.exit(1); }'
 tmp="$(mktemp -d)"
 export CODEX_HOME="$tmp/codex-home"
 mkdir -p "$tmp/target-repo"
