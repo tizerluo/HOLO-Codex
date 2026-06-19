@@ -99,18 +99,16 @@ jobs:
           elif [ "$tag_exists" -eq 1 ]; then
             echo "Dry run: tag already exists and would block a real release: $tag"
           fi
-          npm_exists=0
-          if npm view "holo-codex@$VERSION" version --json >/tmp/npm-view.json 2>/tmp/npm-view.err; then
-            npm_exists=1
-          fi
-          if [ "$npm_exists" -eq 1 ] && [ "$DRY_RUN" != "true" ]; then
+          npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION")"
+          if [ "$npm_status" = "200" ] && [ "$DRY_RUN" != "true" ]; then
             echo "npm version already exists: holo-codex@$VERSION" >&2
-            cat /tmp/npm-view.json >&2
+            cat /tmp/npm-version.json >&2
             exit 1
-          elif [ "$npm_exists" -eq 1 ]; then
+          elif [ "$npm_status" = "200" ]; then
             echo "Dry run: npm version already exists and would block a real release: holo-codex@$VERSION"
-          elif ! grep -q "E404" /tmp/npm-view.err; then
-            cat /tmp/npm-view.err >&2
+          elif [ "$npm_status" != "404" ]; then
+            echo "Unexpected npm registry response for holo-codex@$VERSION: HTTP $npm_status" >&2
+            cat /tmp/npm-version.json >&2
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -122,7 +120,7 @@ jobs:
         run: pnpm lint
 
       - name: Test
-        run: pnpm test
+        run: pnpm exec vitest run --no-file-parallelism --maxWorkers=1
 
       - name: Build hooks
         run: pnpm build:hooks
@@ -262,9 +260,14 @@ jobs:
             echo "Tag already exists: $TAG" >&2
             exit 1
           fi
-          if npm view "holo-codex@$VERSION" version --json >/tmp/npm-view.json 2>/tmp/npm-view.err; then
+          npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION")"
+          if [ "$npm_status" = "200" ]; then
             echo "npm version already exists: holo-codex@$VERSION" >&2
-            cat /tmp/npm-view.json >&2
+            cat /tmp/npm-version.json >&2
+            exit 1
+          elif [ "$npm_status" != "404" ]; then
+            echo "Unexpected npm registry response for holo-codex@$VERSION: HTTP $npm_status" >&2
+            cat /tmp/npm-version.json >&2
             exit 1
           fi
           npm publish "release-candidate/$TGZ" --access public --provenance
@@ -303,7 +306,19 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          npm view "holo-codex@$VERSION" version --json
+          for attempt in {1..12}; do
+            npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION")"
+            if [ "$npm_status" = "200" ]; then
+              cat /tmp/npm-version.json
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "Published version did not appear in npm registry after retry window: HTTP $npm_status" >&2
+              cat /tmp/npm-version.json >&2
+              exit 1
+            fi
+            sleep 10
+          done
           tmp="$(mktemp -d)"
           export CODEX_HOME="$tmp/codex-home"
           mkdir -p "$tmp/target-repo"
