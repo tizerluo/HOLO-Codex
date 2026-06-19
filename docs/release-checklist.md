@@ -53,6 +53,30 @@ The extracted `hooks.json` must have a top-level `hooks` object and must not hav
 
 ## Publish
 
+### GitHub Actions CD
+
+For `v0.1.2` and later, prefer the manual Release workflow:
+
+1. Configure npm Trusted Publishing for package `holo-codex`:
+   - Provider: GitHub Actions
+   - Repository: `tizerluo/HOLO-Codex`
+   - Workflow file: `release.yml`
+   - Allowed action: `npm publish`
+   - Environment: leave blank unless the workflow is later changed to use one.
+2. Run the `Release` workflow from `main` with:
+   - `version`: the exact `package.json` version
+   - `tag`: blank to use `v<version>`, or an explicit tag
+   - `dry_run`: `true` first
+3. Inspect the dry-run artifact and logs.
+4. Re-run with `dry_run: false` to publish with npm provenance and create the GitHub Release.
+
+The workflow uses GitHub OIDC (`id-token: write`) instead of a long-lived npm token.
+Dry runs may use an already-published version to test the workflow shape; real releases fail if the npm version or Git tag already exists.
+Dry runs validate inputs, run tests, pack the tarball, and upload the release candidate. They do not execute `npm publish`, so the first `dry_run: false` run is the first real Trusted Publishing/OIDC validation.
+The manual fallback below is intentionally separate from Trusted Publishing. It may not create provenance unless npm supports it in the local environment and the maintainer explicitly chooses that path.
+
+### Manual fallback
+
 Confirm npm authentication without printing tokens:
 
 ```bash
