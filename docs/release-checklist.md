@@ -12,7 +12,7 @@ Run from the release checkout:
 pnpm install --frozen-lockfile
 pnpm build:hooks
 pnpm lint
-pnpm test
+pnpm exec vitest run --no-file-parallelism --maxWorkers=1
 npm pack --ignore-scripts --dry-run --json
 npm view holo-codex name version dist-tags --json || true
 ```
@@ -52,6 +52,32 @@ npm install --prefix "$tmp/install" "./$tgz"
 The extracted `hooks.json` must have a top-level `hooks` object and must not have legacy top-level hook event keys such as `PreToolUse`. Do not publish if this smoke fails.
 
 ## Publish
+
+### GitHub Actions CD
+
+For `v0.1.2` and later, prefer the manual Release workflow:
+
+1. Configure npm Trusted Publishing for package `holo-codex`:
+   - Provider: GitHub Actions
+   - Repository: `tizerluo/HOLO-Codex`
+   - Workflow file: `release.yml`
+   - Allowed action: `npm publish`
+   - Environment: leave blank unless the workflow is later changed to use one.
+2. Run the `Release` workflow from `main` with:
+   - `version`: the exact `package.json` version
+   - `tag`: blank to use `v<version>`, or an explicit tag
+   - `dry_run`: `true` first
+3. Inspect the dry-run artifact and logs.
+4. Re-run with `dry_run: false` to publish with npm provenance and create the GitHub Release.
+
+The workflow uses GitHub OIDC (`id-token: write`) instead of a long-lived npm token. It runs on Node 24 and installs npm `^11.5.1` in both validation and publish jobs, satisfying the npm Trusted Publishing floor of Node 22.14.0+ and npm 11.5.1+.
+Dry runs may use an already-published version to test the workflow shape; real releases fail if the npm version or Git tag already exists.
+Dry runs validate inputs, run the stable Vitest suite, pack the tarball, verify hook schema, smoke the packed tarball, and upload the release candidate. The workflow checks existing npm versions through retried registry HTTP status codes instead of parsing npm CLI error text. The publish job re-verifies the downloaded tarball integrity against `holo-pack.json` before `npm publish`.
+Dry runs do not execute `npm publish`, so the first `dry_run: false` run is the first real Trusted Publishing/OIDC validation.
+After a real publish, the workflow creates the Git tag and GitHub Release before the registry install smoke. That keeps the release recoverable even if npm registry propagation makes the smoke temporarily fail.
+The manual fallback below is intentionally separate from Trusted Publishing. It may not create provenance unless npm supports it in the local environment and the maintainer explicitly chooses that path.
+
+### Manual fallback
 
 Confirm npm authentication without printing tokens:
 

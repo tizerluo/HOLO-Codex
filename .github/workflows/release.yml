@@ -1,0 +1,358 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version to release, for example 0.1.2"
+        required: true
+        type: string
+      tag:
+        description: "Git tag to create. Defaults to v<version>."
+        required: false
+        type: string
+      dry_run:
+        description: "Validate without publishing or creating a GitHub Release."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      tgz: ${{ steps.pack.outputs.tgz }}
+
+    steps:
+      - name: Check release branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release workflow must run from main. Current ref: $GITHUB_REF" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Ensure npm trusted-publishing CLI floor
+        run: |
+          npm install --global npm@^11.5.1
+          export npm_version="$(npm --version)"
+          node - <<'NODE'
+          const version = process.env.npm_version ?? "";
+          const [major, minor, patch] = version.split(".").map(Number);
+          const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+          if (!ok) {
+            console.error(`npm ${version} is below the trusted publishing floor 11.5.1`);
+            process.exit(1);
+          }
+          console.log(`npm ${version}`);
+          NODE
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.5.1 --activate
+
+      - name: Validate release inputs
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+          TAG_INPUT: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_INPUT:-v$VERSION}"
+          package_version="$(node -p 'require("./package.json").version')"
+          if [ "$package_version" != "$VERSION" ]; then
+            echo "package.json version $package_version does not match workflow input $VERSION" >&2
+            exit 1
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must look like v<semver>. Got: $tag" >&2
+            exit 1
+          fi
+          npm_version_status() {
+            local status
+            for attempt in 1 2 3; do
+              status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION" || printf "000")"
+              if [ "$status" = "200" ] || [ "$status" = "404" ]; then
+                printf "%s" "$status"
+                return
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 5
+              fi
+            done
+            printf "%s" "$status"
+          }
+          tag_exists=0
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            tag_exists=1
+          fi
+          if [ "$tag_exists" -eq 1 ] && [ "$DRY_RUN" != "true" ]; then
+            echo "Tag already exists: $tag" >&2
+            exit 1
+          elif [ "$tag_exists" -eq 1 ]; then
+            echo "Dry run: tag already exists and would block a real release: $tag"
+          fi
+          npm_status="$(npm_version_status)"
+          if [ "$npm_status" = "200" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "npm version already exists: holo-codex@$VERSION" >&2
+            cat /tmp/npm-version.json >&2
+            exit 1
+          elif [ "$npm_status" = "200" ]; then
+            echo "Dry run: npm version already exists and would block a real release: holo-codex@$VERSION"
+          elif [ "$npm_status" != "404" ]; then
+            echo "Unexpected npm registry response for holo-codex@$VERSION: HTTP $npm_status" >&2
+            cat /tmp/npm-version.json >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm exec vitest run --no-file-parallelism --maxWorkers=1
+
+      - name: Build hooks
+        run: pnpm build:hooks
+
+      - name: Pack and validate tarball
+        id: pack
+        run: |
+          set -euo pipefail
+          npm pack --ignore-scripts --json > /tmp/holo-pack.json
+          tgz="$(node -e 'const fs = require("fs"); const pack = JSON.parse(fs.readFileSync("/tmp/holo-pack.json", "utf8")); console.log(pack[0].filename)')"
+          tar -xOf "$tgz" package/plugins/autonomous-pr-loop/hooks/hooks.json | node -e 'const fs = require("fs"); const hooks = JSON.parse(fs.readFileSync(0, "utf8")); const legacy = Object.keys(hooks).filter((key) => key !== "hooks"); if (!hooks.hooks || typeof hooks.hooks !== "object" || legacy.length) { console.error(JSON.stringify({ legacy }, null, 2)); process.exit(1); }'
+          node - <<'NODE'
+          const fs = require("fs");
+          const pack = JSON.parse(fs.readFileSync("/tmp/holo-pack.json", "utf8"));
+          const files = pack[0].files.map((file) => file.path);
+          const required = [
+            "CHANGELOG.md",
+            "plugins/autonomous-pr-loop/hooks/hooks.json",
+            "plugins/autonomous-pr-loop/.codex-plugin/plugin.json",
+            "plugins/autonomous-pr-loop/mcp-server/src/index.ts",
+            "plugins/autonomous-pr-loop/package.json"
+          ];
+          const forbidden = [/^\.agent-loop\//, /^docs\/plans\//, /^docs\/specs\//, /^docs\/research\//, /^AGENTS\.md$/, /^CLAUDE\.md$/, /^HANDOFF\.md$/, /\.tgz$/];
+          const missing = required.filter((item) => !files.includes(item));
+          const bad = files.filter((item) => forbidden.some((pattern) => pattern.test(item)));
+          if (missing.length || bad.length) {
+            console.error(JSON.stringify({ missing, bad }, null, 2));
+            process.exit(1);
+          }
+          NODE
+          rm -rf release-candidate
+          mkdir -p release-candidate
+          cp "$tgz" "release-candidate/$tgz"
+          cp /tmp/holo-pack.json release-candidate/holo-pack.json
+          echo "tgz=$tgz" >> "$GITHUB_OUTPUT"
+
+      - name: Tarball install smoke
+        env:
+          TGZ: ${{ steps.pack.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          export CODEX_HOME="$tmp/codex-home"
+          mkdir -p "$tmp/target-repo"
+          git -C "$tmp/target-repo" init -b main
+          git -C "$tmp/target-repo" remote add origin https://github.com/example/holo-codex-smoke.git
+          npm install --prefix "$tmp/install" "./$TGZ"
+          "$tmp/install/node_modules/.bin/agent-loop" --help
+          "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" init --json
+          "$tmp/install/node_modules/.bin/agent-loop" install-hooks --repo "$tmp/target-repo" --json
+          "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" local doctor --json
+
+      - name: Upload release candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: holo-codex-${{ inputs.version }}-candidate
+          path: release-candidate/
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Ensure npm trusted-publishing CLI floor
+        run: |
+          npm install --global npm@^11.5.1
+          export npm_version="$(npm --version)"
+          node - <<'NODE'
+          const version = process.env.npm_version ?? "";
+          const [major, minor, patch] = version.split(".").map(Number);
+          const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+          if (!ok) {
+            console.error(`npm ${version} is below the trusted publishing floor 11.5.1`);
+            process.exit(1);
+          }
+          console.log(`npm ${version}`);
+          NODE
+
+      - name: Download validated release candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: holo-codex-${{ inputs.version }}-candidate
+          path: release-candidate
+
+      - name: Verify release candidate integrity
+        env:
+          TGZ: ${{ needs.validate.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const tgz = process.env.TGZ;
+          const pack = JSON.parse(fs.readFileSync("release-candidate/holo-pack.json", "utf8"));
+          const expected = pack[0]?.integrity;
+          if (!tgz || !expected) {
+            console.error(JSON.stringify({ tgz, expected }, null, 2));
+            process.exit(1);
+          }
+          const actual = `sha512-${crypto
+            .createHash("sha512")
+            .update(fs.readFileSync(`release-candidate/${tgz}`))
+            .digest("base64")}`;
+          if (actual !== expected) {
+            console.error(JSON.stringify({ expected, actual }, null, 2));
+            process.exit(1);
+          }
+          console.log(`Verified ${tgz} integrity.`);
+          NODE
+
+      - name: Publish validated tarball to npm
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ inputs.version }}
+          TGZ: ${{ needs.validate.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          test -f "release-candidate/$TGZ"
+          npm_version_status() {
+            local status
+            for attempt in 1 2 3; do
+              status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION" || printf "000")"
+              if [ "$status" = "200" ] || [ "$status" = "404" ]; then
+                printf "%s" "$status"
+                return
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 5
+              fi
+            done
+            printf "%s" "$status"
+          }
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $TAG" >&2
+            exit 1
+          fi
+          npm_status="$(npm_version_status)"
+          if [ "$npm_status" = "200" ]; then
+            echo "npm version already exists: holo-codex@$VERSION" >&2
+            cat /tmp/npm-version.json >&2
+            exit 1
+          elif [ "$npm_status" != "404" ]; then
+            echo "Unexpected npm registry response for holo-codex@$VERSION: HTTP $npm_status" >&2
+            cat /tmp/npm-version.json >&2
+            exit 1
+          fi
+          npm publish "release-candidate/$TGZ" --access public --provenance
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ inputs.version }}
+          TGZ: ${{ needs.validate.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+          cat > /tmp/release-notes.md <<EOF
+          ## HOLO-Codex $TAG
+
+          Release for \`holo-codex@$VERSION\`.
+
+          Install:
+
+          \`\`\`bash
+          npm install --global holo-codex
+          \`\`\`
+
+          Runtime identifiers remain stable: \`agent-loop\`, \`.agent-loop/\`, and \`autonomous-pr-loop\`.
+          EOF
+          gh release create "$TAG" "release-candidate/$TGZ" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "HOLO-Codex $TAG" \
+            --notes-file /tmp/release-notes.md
+
+      - name: Post-publish registry smoke
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            npm_status="$(curl --silent --show-error --output /tmp/npm-version.json --write-out "%{http_code}" "https://registry.npmjs.org/holo-codex/$VERSION" || printf "000")"
+            if [ "$npm_status" = "200" ]; then
+              cat /tmp/npm-version.json
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "Published version did not appear in npm registry after retry window: HTTP $npm_status" >&2
+              cat /tmp/npm-version.json >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          tmp="$(mktemp -d)"
+          export CODEX_HOME="$tmp/codex-home"
+          mkdir -p "$tmp/target-repo"
+          git -C "$tmp/target-repo" init -b main
+          git -C "$tmp/target-repo" remote add origin https://github.com/example/holo-codex-smoke.git
+          npm install --prefix "$tmp/install" "holo-codex@$VERSION"
+          "$tmp/install/node_modules/.bin/agent-loop" --help
+          "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" init --json
+          "$tmp/install/node_modules/.bin/agent-loop" install-hooks --repo "$tmp/target-repo" --json
