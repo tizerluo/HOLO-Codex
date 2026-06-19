@@ -160,6 +160,8 @@ jobs:
           echo "tgz=$tgz" >> "$GITHUB_OUTPUT"
 
       - name: Tarball install smoke
+        env:
+          TGZ: ${{ steps.pack.outputs.tgz }}
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -167,7 +169,7 @@ jobs:
           mkdir -p "$tmp/target-repo"
           git -C "$tmp/target-repo" init -b main
           git -C "$tmp/target-repo" remote add origin https://github.com/example/holo-codex-smoke.git
-          npm install --prefix "$tmp/install" "./${{ steps.pack.outputs.tgz }}"
+          npm install --prefix "$tmp/install" "./$TGZ"
           "$tmp/install/node_modules/.bin/agent-loop" --help
           "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" init --json
           "$tmp/install/node_modules/.bin/agent-loop" install-hooks --repo "$tmp/target-repo" --json
@@ -222,6 +224,32 @@ jobs:
           name: holo-codex-${{ inputs.version }}-candidate
           path: release-candidate
 
+      - name: Verify release candidate integrity
+        env:
+          TGZ: ${{ needs.validate.outputs.tgz }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const tgz = process.env.TGZ;
+          const pack = JSON.parse(fs.readFileSync("release-candidate/holo-pack.json", "utf8"));
+          const expected = pack[0]?.integrity;
+          if (!tgz || !expected) {
+            console.error(JSON.stringify({ tgz, expected }, null, 2));
+            process.exit(1);
+          }
+          const actual = `sha512-${crypto
+            .createHash("sha512")
+            .update(fs.readFileSync(`release-candidate/${tgz}`))
+            .digest("base64")}`;
+          if (actual !== expected) {
+            console.error(JSON.stringify({ expected, actual }, null, 2));
+            process.exit(1);
+          }
+          console.log(`Verified ${tgz} integrity.`);
+          NODE
+
       - name: Publish validated tarball to npm
         env:
           TAG: ${{ needs.validate.outputs.tag }}
@@ -240,22 +268,6 @@ jobs:
             exit 1
           fi
           npm publish "release-candidate/$TGZ" --access public --provenance
-
-      - name: Post-publish registry smoke
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          npm view "holo-codex@$VERSION" version --json
-          tmp="$(mktemp -d)"
-          export CODEX_HOME="$tmp/codex-home"
-          mkdir -p "$tmp/target-repo"
-          git -C "$tmp/target-repo" init -b main
-          git -C "$tmp/target-repo" remote add origin https://github.com/example/holo-codex-smoke.git
-          npm install --prefix "$tmp/install" "holo-codex@$VERSION"
-          "$tmp/install/node_modules/.bin/agent-loop" --help
-          "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" init --json
-          "$tmp/install/node_modules/.bin/agent-loop" install-hooks --repo "$tmp/target-repo" --json
 
       - name: Create tag and GitHub Release
         env:
@@ -285,3 +297,19 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "HOLO-Codex $TAG" \
             --notes-file /tmp/release-notes.md
+
+      - name: Post-publish registry smoke
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          npm view "holo-codex@$VERSION" version --json
+          tmp="$(mktemp -d)"
+          export CODEX_HOME="$tmp/codex-home"
+          mkdir -p "$tmp/target-repo"
+          git -C "$tmp/target-repo" init -b main
+          git -C "$tmp/target-repo" remote add origin https://github.com/example/holo-codex-smoke.git
+          npm install --prefix "$tmp/install" "holo-codex@$VERSION"
+          "$tmp/install/node_modules/.bin/agent-loop" --help
+          "$tmp/install/node_modules/.bin/agent-loop" --repo "$tmp/target-repo" init --json
+          "$tmp/install/node_modules/.bin/agent-loop" install-hooks --repo "$tmp/target-repo" --json
