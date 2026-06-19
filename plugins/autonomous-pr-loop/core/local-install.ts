@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { runCommand } from "./command.js";
 import { isRecord } from "./config.js";
 import { AgentLoopError } from "./errors.js";
+import { commandsReferencingLegacyPrivateRepo, inspectAgentLoopBinary, inspectBundledHooksConfig, redactDiagnosticText, type AgentLoopBinaryInspection, type BundledHooksConfigInspection } from "./hook-diagnostics.js";
 import { agentLoopRouterHookCommand, collectHookCommands, isLegacyAgentLoopHookCommand } from "./hook-installation.js";
 import { CODEX_HOOK_EVENTS, hookScriptName } from "./hook-events.js";
 import { hookRegistryPath, inspectHookRegistryLock, listHookBindings } from "./hook-router.js";
@@ -90,13 +90,18 @@ export interface LocalDoctorReport {
     realPath?: string;
     expectedPackageRoot: string;
     pointsToExpectedPackage: boolean;
+    referencesExpectedPackage: boolean;
+    legacyPrivateRepoReferences: string[];
+    readError?: string;
   };
   hooks: {
     hooksPath: string;
     hooksJsonError?: string;
+    bundledHooksConfig: BundledHooksConfigInspection;
     routerInstalled: boolean;
     missingRouterEvents: string[];
     legacyCommands: string[];
+    legacyPrivateRepoCommands: string[];
     routerCommandsPointToExpectedDist: boolean;
   };
   bindings: {
@@ -353,8 +358,7 @@ export function inspectLocalInstall(options: LocalInstallOptions): LocalDoctorRe
   const repoRoot = canonicalPath(options.repoRoot);
   const codexHome = codexHomePath();
   const hooksPath = join(codexHome, "hooks.json");
-  const binaryPath = firstPathBinary("agent-loop");
-  const realBinaryPath = binaryPath && existsSync(binaryPath) ? canonicalPath(binaryPath) : undefined;
+  const binary = inspectAgentLoopBinary(packageRoot);
   const hooks = inspectHooks(hooksPath, packageRoot);
   const bindings = inspectBindings(codexHome, repoRoot);
   const selfLinkPollution = detectSelfLinkPollution(packageRoot);
@@ -363,12 +367,7 @@ export function inspectLocalInstall(options: LocalInstallOptions): LocalDoctorRe
     packageRoot,
     repoRoot,
     codexHome,
-    binary: {
-      ...(binaryPath ? { path: binaryPath } : {}),
-      ...(realBinaryPath ? { realPath: realBinaryPath } : {}),
-      expectedPackageRoot: packageRoot,
-      pointsToExpectedPackage: realBinaryPath ? realBinaryPath.startsWith(packageRoot) : false
-    },
+    binary,
     hooks,
     bindings,
     selfLinkPollution
@@ -599,12 +598,15 @@ function inspectHooks(hooksPath: string, packageRoot: string): LocalDoctorReport
   const missingRouterEvents = CODEX_HOOK_EVENTS.filter((event) => !commands.includes(agentLoopRouterHookCommand(event, packageRoot)));
   const expectedDist = hookDistRoot(packageRoot);
   const routerCommands = commands.filter((command) => command.includes("autonomous-pr-loop/hooks/dist/"));
+  const bundledHooksConfig = inspectBundledHooksConfig(packageRoot);
   return {
     hooksPath,
     ...(hooksJsonError ? { hooksJsonError } : {}),
+    bundledHooksConfig,
     routerInstalled: missingRouterEvents.length === 0,
     missingRouterEvents,
-    legacyCommands: commands.filter(isLegacyAgentLoopHookCommand),
+    legacyCommands: commands.filter(isLegacyAgentLoopHookCommand).map(redactDiagnosticText),
+    legacyPrivateRepoCommands: commandsReferencingLegacyPrivateRepo(commands),
     routerCommandsPointToExpectedDist: routerCommands.length > 0 && routerCommands.every((command) => command.includes(expectedDist))
   };
 }
@@ -733,15 +735,6 @@ function localInstallFailure(message: string, snapshotPath: string, manifestChan
 function gitStatus(cwd: string): string[] {
   const result = runCommand("git", ["status", "--short"], cwd);
   return result.ok && result.stdout ? result.stdout.split(/\r?\n/).filter(Boolean) : [];
-}
-
-function firstPathBinary(name: string): string | undefined {
-  try {
-    const output = execFileSync("sh", ["-lc", `command -v ${name} || true`], { encoding: "utf8" }).trim();
-    return output || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function localInstallBackupsDir(): string {

@@ -10,6 +10,7 @@ import { startDashboardServer } from "./dashboard-server.js";
 import { runDoctor } from "./doctor.js";
 import { AgentLoopError, isGateCode, toErrorPayload, type AgentLoopErrorCode } from "./errors.js";
 import { recoverBlockedRun } from "./gate-recovery.js";
+import { commandsReferencingLegacyPrivateRepo, inspectAgentLoopBinary, inspectBundledHooksConfig, redactDiagnosticText, type AgentLoopBinaryInspection, type BundledHooksConfigInspection } from "./hook-diagnostics.js";
 import { agentLoopRouterHookEntries, collectHookCommands, isAgentLoopHookCommand, isLegacyAgentLoopHookCommand } from "./hook-installation.js";
 import { hookRegistryPath, inspectHookRegistryLock, listHookBindings, removeHookBinding, upsertHookBinding } from "./hook-router.js";
 import { inspectLocalInstall, installLocalAgentLoop, listLocalInstallSnapshots, pruneLocalInstallSnapshots, rollbackLocalAgentLoop } from "./local-install.js";
@@ -714,6 +715,9 @@ function hooks(repoRoot: string, args: string[], json: boolean, localeOverride: 
       report.routerInstalled ? "hook router installed" : "hook router missing",
       `active bindings: ${report.activeBindings}`,
       `legacy entries: ${report.legacyCommands.length}`,
+      `old private repo hook refs: ${report.legacyPrivateRepoCommands.length}`,
+      `bundled hooks config: ${report.bundledHooksConfig.valid ? "valid" : "invalid"}`,
+      `binary old private repo refs: ${report.agentLoopBinary.legacyPrivateRepoReferences.length}`,
       `hook capture: ${report.hookCapture.status} - ${report.hookCapture.reason}`
     ]);
   }
@@ -767,9 +771,12 @@ function local(repoRoot: string, args: string[], json: boolean): CliResult {
       "agent-loop local doctor",
       `binary: ${result.binary.path ?? "not found"}`,
       `binary points to expected package: ${result.binary.pointsToExpectedPackage ? "yes" : "no"}`,
+      `binary old private repo refs: ${result.binary.legacyPrivateRepoReferences.length}`,
+      `bundled hooks config: ${result.hooks.bundledHooksConfig.valid ? "valid" : "invalid"}`,
       `router installed: ${result.hooks.routerInstalled}`,
       `router points to expected dist: ${result.hooks.routerCommandsPointToExpectedDist ? "yes" : "no"}`,
       `legacy entries: ${result.hooks.legacyCommands.length}`,
+      `old private repo hook refs: ${result.hooks.legacyPrivateRepoCommands.length}`,
       `current repo bindings: ${result.bindings.currentRepoBindings}`,
       `stale/missing path bindings: ${result.bindings.staleOrMissingPathBindings}`,
       `temp path bindings: ${result.bindings.tempPathBindings}`,
@@ -1123,6 +1130,9 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   routerInstalled: boolean;
   missingRouterEvents: string[];
   legacyCommands: string[];
+  legacyPrivateRepoCommands: string[];
+  bundledHooksConfig: BundledHooksConfigInspection;
+  agentLoopBinary: AgentLoopBinaryInspection;
   activeBindings: number;
   currentRepoBindings: number;
   lock: ReturnType<typeof inspectHookRegistryLock>;
@@ -1145,7 +1155,10 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   const missingRouterEvents = Object.entries(routerEntries)
     .filter(([, entries]) => !entries.some((entry) => hookCommands(entry).every((command) => commands.includes(command))))
     .map(([event]) => event);
-  const legacyCommands = commands.filter(isLegacyAgentLoopHookCommand);
+  const legacyCommands = commands.filter(isLegacyAgentLoopHookCommand).map(redactDiagnosticText);
+  const legacyPrivateRepoCommands = commandsReferencingLegacyPrivateRepo(commands);
+  const bundledHooksConfig = inspectBundledHooksConfig(packageRoot);
+  const agentLoopBinary = inspectAgentLoopBinary(packageRoot);
   let bindings: ReturnType<typeof listHookBindings>;
   let registryError: string | undefined;
   try {
@@ -1164,6 +1177,9 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
     routerInstalled: hooksJsonError === undefined && missingRouterEvents.length === 0,
     missingRouterEvents,
     legacyCommands,
+    legacyPrivateRepoCommands,
+    bundledHooksConfig,
+    agentLoopBinary,
     activeBindings,
     currentRepoBindings,
     lock,

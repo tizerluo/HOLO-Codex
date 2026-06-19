@@ -1,106 +1,108 @@
 {
-  "PreToolUse": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/pre-tool-use.js",
-          "timeout": 1000,
-          "statusMessage": "Checking agent-loop command policy"
-        }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/post-tool-use.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop PostToolUse event"
-        }
-      ]
-    }
-  ],
-  "UserPromptSubmit": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/user-prompt-submit.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop UserPromptSubmit event"
-        }
-      ]
-    }
-  ],
-  "Stop": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/stop.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop Stop event"
-        }
-      ]
-    }
-  ],
-  "SessionStart": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/session-start.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop SessionStart event"
-        }
-      ]
-    }
-  ],
-  "PreCompact": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/pre-compact.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop PreCompact event"
-        }
-      ]
-    }
-  ],
-  "PostCompact": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/post-compact.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop PostCompact event"
-        }
-      ]
-    }
-  ],
-  "PermissionRequest": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ./hooks/dist/permission-request.js",
-          "timeout": 500,
-          "statusMessage": "Recording agent-loop PermissionRequest event"
-        }
-      ]
-    }
-  ]
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/pre-tool-use.js\"",
+            "timeout": 1000,
+            "statusMessage": "Checking agent-loop command policy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/post-tool-use.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop PostToolUse event"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/user-prompt-submit.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop UserPromptSubmit event"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/stop.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop Stop event"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/session-start.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop SessionStart event"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/pre-compact.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop PreCompact event"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/post-compact.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop PostCompact event"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/dist/permission-request.js\"",
+            "timeout": 500,
+            "statusMessage": "Recording agent-loop PermissionRequest event"
+          }
+        ]
+      }
+    ]
+  }
 }

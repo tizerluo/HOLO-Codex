@@ -5,6 +5,7 @@ import { redactRemote, runCommand } from "./command.js";
 import { loadConfig, statePath } from "./config.js";
 import { AgentLoopError } from "./errors.js";
 import { inspectHookCapture } from "./hook-capture.js";
+import { commandsReferencingLegacyPrivateRepo, inspectAgentLoopBinary, inspectBundledHooksConfig, redactDiagnosticText } from "./hook-diagnostics.js";
 import { agentLoopRouterHookCommand, collectHookCommands, isLegacyAgentLoopHookCommand } from "./hook-installation.js";
 import { CODEX_HOOK_EVENTS, hookScriptName } from "./hook-events.js";
 import { hookRegistryPath, inspectHookRegistryLock, listHookBindings } from "./hook-router.js";
@@ -202,10 +203,17 @@ function checkHooksInstalled(repoRoot: string, pluginRoot: string): DoctorCheck 
   }
   const commands = collectHookCommands(parsedHooks);
   const missing = CODEX_HOOK_EVENTS.filter((event) => !commands.includes(agentLoopRouterHookCommand(event, pluginRoot)));
-  const legacyCommands = commands.filter(isLegacyAgentLoopHookCommand);
+  const legacyCommands = commands.filter(isLegacyAgentLoopHookCommand).map(redactDiagnosticText);
   const expectedDist = hookDistRoot(pluginRoot);
   const routerCommands = commands.filter((command) => command.includes("autonomous-pr-loop/hooks/dist/"));
-  const unexpectedRouterCommands = routerCommands.filter((command) => !command.includes(expectedDist));
+  const unexpectedRouterCommands = routerCommands
+    .filter((command) => !command.includes(expectedDist))
+    .map(redactDiagnosticText);
+  const bundledHooksConfig = inspectBundledHooksConfig(pluginRoot);
+  const agentLoopBinary = inspectAgentLoopBinary(pluginRoot);
+  const legacyPrivateRepoCommands = commandsReferencingLegacyPrivateRepo(commands);
+  const legacyPrivateRepoDrift =
+    legacyPrivateRepoCommands.length > 0 || agentLoopBinary.legacyPrivateRepoReferences.length > 0;
   let bindings: ReturnType<typeof listHookBindings>;
   let registryError: string | undefined;
   try {
@@ -221,10 +229,12 @@ function checkHooksInstalled(repoRoot: string, pluginRoot: string): DoctorCheck 
   const installed = missing.length === 0;
   const routerDistDrift = unexpectedRouterCommands.length > 0;
   const captureWarn = capture.status === "ambiguous" || capture.status === "unavailable";
-  const status = !installed ? "warn" : routerDistDrift || registryError || lock.stale || legacyCommands.length > 0 || currentRepoBindings.length === 0 || captureWarn ? "warn" : "pass";
+  const status = !installed ? "warn" : routerDistDrift || !bundledHooksConfig.valid || legacyPrivateRepoDrift || registryError || lock.stale || legacyCommands.length > 0 || currentRepoBindings.length === 0 || captureWarn ? "warn" : "pass";
   const message = hookInstallMessage({
     installed,
     routerDistDrift,
+    bundledHooksConfigValid: bundledHooksConfig.valid,
+    legacyPrivateRepoDrift,
     registryError,
     lockStale: lock.stale,
     lockPath: lock.path,
@@ -247,6 +257,9 @@ function checkHooksInstalled(repoRoot: string, pluginRoot: string): DoctorCheck 
       legacyCommands,
       routerCommandsPointToExpectedDist: routerCommands.length > 0 && unexpectedRouterCommands.length === 0,
       unexpectedRouterCommands,
+      bundledHooksConfig,
+      agentLoopBinary,
+      legacyPrivateRepoCommands,
       activeBindings: activeBindings.length,
       currentRepoBindings: currentRepoBindings.length,
       lock,
@@ -260,6 +273,8 @@ function checkHooksInstalled(repoRoot: string, pluginRoot: string): DoctorCheck 
 function hookInstallMessage(input: {
   installed: boolean;
   routerDistDrift: boolean;
+  bundledHooksConfigValid: boolean;
+  legacyPrivateRepoDrift: boolean;
   registryError: string | undefined;
   lockStale: boolean;
   lockPath: string;
@@ -268,28 +283,37 @@ function hookInstallMessage(input: {
   installCommand: string;
   codexHome: string;
 }): string {
+  const suffix = input.legacyPrivateRepoDrift
+    ? " Also, hook commands still reference the old private repo."
+    : "";
+  if (!input.bundledHooksConfigValid) {
+    return `Bundled plugin hooks config is not valid for current Codex. Reinstall or refresh the HOLO-Codex plugin after fixing hooks/hooks.json.${suffix}`;
+  }
   if (!input.installed && input.routerDistDrift) {
-    return `Codex hook router is not installed at the expected hook dist; existing router commands point outside the expected hook dist. Run \`${input.installCommand}\` to refresh router hooks and bind this repo.`;
+    return `Codex hook router is not installed at the expected hook dist; existing router commands point outside the expected hook dist. Run \`${input.installCommand}\` to refresh router hooks and bind this repo.${suffix}`;
   }
   if (!input.installed) {
-    return `Codex hook router is not installed. Run \`${input.installCommand}\` to install router hooks and bind this repo.`;
+    return `Codex hook router is not installed. Run \`${input.installCommand}\` to install router hooks and bind this repo.${suffix}`;
   }
   if (input.routerDistDrift) {
-    return `Codex hook router includes commands outside the expected hook dist. Run \`${input.installCommand}\` to refresh router hooks.`;
+    return `Codex hook router includes commands outside the expected hook dist. Run \`${input.installCommand}\` to refresh router hooks.${suffix}`;
   }
   if (input.registryError) {
-    return `Codex hook binding registry is not valid. Fix ${hookRegistryPath(input.codexHome)}, then run \`${input.installCommand}\`.`;
+    return `Codex hook binding registry is not valid. Fix ${hookRegistryPath(input.codexHome)}, then run \`${input.installCommand}\`.${suffix}`;
   }
   if (input.lockStale) {
-    return `Codex hook binding registry lock appears stale. Remove ${input.lockPath} or rerun after the stale writer exits.`;
+    return `Codex hook binding registry lock appears stale. Remove ${input.lockPath} or rerun after the stale writer exits.${suffix}`;
   }
   if (input.legacyCommands.length > 0) {
-    return `Codex hook router is installed, but legacy per-repo agent-loop hooks remain. Run \`${input.installCommand}\` to migrate them.`;
+    return `Codex hook router is installed, but legacy per-repo agent-loop hooks remain. Run \`${input.installCommand}\` to migrate them.${suffix}`;
+  }
+  if (input.legacyPrivateRepoDrift) {
+    return `Codex hook setup still references the old private repo. Run \`${input.installCommand}\` from the canonical HOLO-Codex workspace and reinstall the global CLI if needed.`;
   }
   if (input.currentRepoBindings.length === 0) {
-    return `Codex hook router is installed, but this repo is not bound. Run \`${input.installCommand}\`.`;
+    return `Codex hook router is installed, but this repo is not bound. Run \`${input.installCommand}\`.${suffix}`;
   }
-  return "HOLO-Codex hook router is installed and this repo has an active binding.";
+  return `HOLO-Codex hook router is installed and this repo has an active binding.${suffix}`;
 }
 
 function installHooksCommand(repoRoot: string): string {

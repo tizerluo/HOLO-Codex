@@ -1167,15 +1167,33 @@ exit 0
     }
   });
 
+  it("local doctor reports invalid bundled hooks schema", () => {
+    const repoRoot = tempRepo("agent-loop-local-bundled-hooks-target-");
+    const packageRoot = mkdtempSync(join(tmpdir(), "agent-loop-local-bundled-hooks-plugin-"));
+    const hooksDir = join(packageRoot, "plugins", "autonomous-pr-loop", "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(join(packageRoot, "package.json"), `${JSON.stringify({ name: "holo-codex" })}\n`);
+    writeFileSync(join(hooksDir, "hooks.json"), `${JSON.stringify({
+      PreToolUse: [{ matcher: "*", hooks: [] }]
+    }, null, 2)}\n`);
+
+    const report = inspectLocalInstall({ repoRoot, packageRoot });
+
+    expect(report.hooks.bundledHooksConfig).toMatchObject({
+      valid: false,
+      legacyTopLevelEvents: ["PreToolUse"]
+    });
+  });
+
   it("local doctor human output reports binary, router, binding, and lock drift", async () => {
     const repoRoot = tempRepo("agent-loop-local-doctor-drift-target-");
     const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-local-doctor-drift-home-"));
     const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-local-doctor-drift-bin-"));
     mkdirSync(join(codexHome, "agent-loop"), { recursive: true });
-    writeFileSync(join(fakeBinDir, "agent-loop"), "#!/bin/sh\necho fake\n", { mode: 0o755 });
+    writeFileSync(join(fakeBinDir, "agent-loop"), "#!/bin/sh\nTOKEN=ghp_123456789012345678901234567890123456 node /Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/bin/agent-loop.mjs \"$@\"\n", { mode: 0o755 });
     writeFileSync(join(codexHome, "hooks.json"), `${JSON.stringify({
       hooks: {
-        PreToolUse: [{ hooks: [{ type: "command", command: "node '/tmp/old/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
+        PreToolUse: [{ hooks: [{ type: "command", command: "TOKEN=ghp_123456789012345678901234567890123456 node '/Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
       }
     })}\n`);
     writeFileSync(join(codexHome, "agent-loop", "hook-bindings.json"), `${JSON.stringify({
@@ -1200,7 +1218,11 @@ exit 0
     }
 
     expect(output).toContain("binary points to expected package: no");
+    expect(output).toContain("binary old private repo refs: 1");
+    expect(output).toContain("bundled hooks config: valid");
     expect(output).toContain("router points to expected dist: no");
+    expect(output).toContain("old private repo hook refs: 1");
+    expect(output).not.toContain("ghp_123456789012345678901234567890123456");
     expect(output).toContain("stale/missing path bindings: 2");
     expect(output).toContain("temp path bindings: 1");
     expect(output).toContain("registry lock: stale");
@@ -1267,7 +1289,8 @@ exit 0
   it("install-hooks migrates legacy per-repo agent-loop entries while preserving user hooks", async () => {
     const repoRoot = join(import.meta.dirname, "../../..");
     const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-router-migrate-"));
-    const legacyCommand = `AGENT_LOOP_REPO_ROOT='${repoRoot}' node '${join(repoRoot, "plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js")}'`;
+    const legacyToken = "ghp_123456789012345678901234567890123456";
+    const legacyCommand = `TOKEN=${legacyToken} AGENT_LOOP_REPO_ROOT='${repoRoot}' node '${join(repoRoot, "plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js")}'`;
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(join(codexHome, "hooks.json"), `${JSON.stringify({
       hooks: {
@@ -1292,6 +1315,7 @@ exit 0
 
     expect(before.routerInstalled).toBe(false);
     expect(before.legacyCommands).toHaveLength(1);
+    expect(JSON.stringify(before)).not.toContain(legacyToken);
     expect(result.exitCode).toBe(0);
     expect(installedText).not.toContain(legacyCommand);
     expect(installedText).toContain("echo user");
@@ -1336,6 +1360,39 @@ exit 0
     expect(invalidRegistry.routerInstalled).toBe(true);
     expect(invalidHooks.hooksJsonError).toBeTruthy();
     expect(invalidHooks.routerInstalled).toBe(false);
+  });
+
+  it("hooks doctor reports bundled hook schema and old private repo references", async () => {
+    const repoRoot = tempRepo("agent-loop-hooks-doctor-diagnostics-");
+    const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-hooks-doctor-diagnostics-"));
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(codexHome, "hooks.json"), `${JSON.stringify({
+      hooks: {
+        PreToolUse: [{ hooks: [{ type: "command", command: "TOKEN=ghp_123456789012345678901234567890123456 node '/Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
+      }
+    }, null, 2)}\n`);
+    const oldCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+
+    let payload: {
+      bundledHooksConfig: { valid: boolean };
+      legacyPrivateRepoCommands: string[];
+      agentLoopBinary: { legacyPrivateRepoReferences: string[] };
+    };
+    let human: string;
+    try {
+      payload = JSON.parse((await runAgentLoopCli(["hooks", "doctor", "--repo", repoRoot, "--json"], repoRoot)).stdout);
+      human = (await runAgentLoopCli(["hooks", "doctor", "--repo", repoRoot], repoRoot)).stdout;
+    } finally {
+      process.env.CODEX_HOME = oldCodexHome;
+    }
+
+    expect(payload.bundledHooksConfig.valid).toBe(true);
+    expect(payload.legacyPrivateRepoCommands).toHaveLength(1);
+    expect(JSON.stringify(payload)).not.toContain("ghp_123456789012345678901234567890123456");
+    expect(payload.agentLoopBinary.legacyPrivateRepoReferences).toEqual(expect.any(Array));
+    expect(human).toContain("bundled hooks config: valid");
+    expect(human).toContain("old private repo hook refs: 1");
   });
 
   it("hooks doctor reports whether hook capture has been observed", async () => {
@@ -1396,9 +1453,13 @@ exit 0
     const staleHome = mkdtempSync(join(tmpdir(), "agent-loop-hooks-stale-"));
     const ambiguousRepo = tempRepo("agent-loop-hooks-ambiguous-");
     const ambiguousHome = mkdtempSync(join(tmpdir(), "agent-loop-hooks-ambiguous-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-hooks-clean-bin-"));
     const oldCodexHome = process.env.CODEX_HOME;
+    const oldPath = process.env.PATH;
+    writeFileSync(join(fakeBinDir, "agent-loop"), "#!/bin/sh\necho agent-loop clean test shim\n", { mode: 0o755 });
 
     try {
+      process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
       process.env.CODEX_HOME = staleHome;
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
@@ -1440,6 +1501,7 @@ exit 0
     } finally {
       vi.useRealTimers();
       process.env.CODEX_HOME = oldCodexHome;
+      process.env.PATH = oldPath;
     }
   }, 90_000);
 
@@ -1496,6 +1558,7 @@ exit 0
     writeFileSync(join(fakeBinDir, "gh"), "#!/bin/sh\necho \"Logged in to github.com account test (repo, workflow)\"\n", { mode: 0o755 });
     writeFileSync(join(fakeBinDir, "codex"), "#!/bin/sh\necho \"codex-cli 0.0.0-test\"\n", { mode: 0o755 });
     writeFileSync(join(fakeBinDir, "npx"), "#!/bin/sh\necho \"gitnexus 0.0.0-test\"\n", { mode: 0o755 });
+    writeFileSync(join(fakeBinDir, "agent-loop"), "#!/bin/sh\necho agent-loop clean test shim\n", { mode: 0o755 });
     const oldPath = process.env.PATH;
     process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
     let doctor: { checks: Array<{ name: string; status: string; message: string }> };
