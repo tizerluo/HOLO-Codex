@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAgentLoopCli } from "../core/cli.js";
+import { inspectAgentLoopBinary } from "../core/hook-diagnostics.js";
 import { cleanupTempRepos, tempRepo } from "./helpers.js";
 
 describe("agent-loop CLI", () => {
@@ -118,10 +119,11 @@ describe("agent-loop CLI", () => {
   it("doctor reports unexpected router hook dist paths in details", async () => {
     const repoRoot = tempRepo("agent loop doctor old router-");
     const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-old-router-"));
+    const legacyToken = "ghp_123456789012345678901234567890123456";
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(join(codexHome, "hooks.json"), `${JSON.stringify({
       hooks: {
-        PreToolUse: [{ hooks: [{ type: "command", command: "node '/tmp/old/autonomous-pr-loop/hooks/dist/pre-tool-use.js'" }] }]
+        PreToolUse: [{ hooks: [{ type: "command", command: `TOKEN=${legacyToken} node '/tmp/old/autonomous-pr-loop/hooks/dist/pre-tool-use.js'` }] }]
       }
     }, null, 2)}\n`);
     const oldCodexHome = process.env.CODEX_HOME;
@@ -139,7 +141,58 @@ describe("agent-loop CLI", () => {
     expect(hookCheck?.status).toBe("warn");
     expect(hookCheck?.message).toContain("outside the expected hook dist");
     expect(hookCheck?.details?.routerCommandsPointToExpectedDist).toBe(false);
-    expect(hookCheck?.details?.unexpectedRouterCommands?.[0]).toContain("/tmp/old/");
+    expect(hookCheck?.details?.unexpectedRouterCommands?.[0]).toContain("[redacted]");
+    expect(JSON.stringify(hookCheck)).not.toContain(legacyToken);
+  });
+
+  it("doctor warns when only the PATH agent-loop binary points at the old private repo", async () => {
+    const repoRoot = tempRepo("agent loop doctor old binary-");
+    const codexHome = mkdtempSync(join(tmpdir(), "agent-loop-old-binary-home-"));
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-old-binary-bin-"));
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(fakeBinDir, "agent-loop"), "#!/bin/sh\nnode /Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/bin/agent-loop.mjs \"$@\"\n", { mode: 0o755 });
+    const oldCodexHome = process.env.CODEX_HOME;
+    const oldPath = process.env.PATH;
+    process.env.CODEX_HOME = codexHome;
+
+    let payload: { checks: Array<{ name: string; status?: string; message?: string; details?: { legacyPrivateRepoCommands?: string[]; agentLoopBinary?: { legacyPrivateRepoReferences?: string[] } } }> } | undefined;
+    try {
+      await runAgentLoopCli(["install-hooks", "--repo", repoRoot, "--json"], repoRoot);
+      process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
+      payload = JSON.parse((await runAgentLoopCli(["doctor", "--json"], repoRoot)).stdout);
+    } finally {
+      process.env.CODEX_HOME = oldCodexHome;
+      process.env.PATH = oldPath;
+    }
+
+    const hookCheck = payload?.checks.find((check) => check.name === "codex hooks");
+    expect(hookCheck?.status).toBe("warn");
+    expect(hookCheck?.message).toContain("old private repo");
+    expect(hookCheck?.details?.legacyPrivateRepoCommands).toEqual([]);
+    expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences).toHaveLength(1);
+    expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences?.[0]).toContain("<legacy-private-repo-path>");
+    expect(hookCheck?.details?.agentLoopBinary?.legacyPrivateRepoReferences?.[0]).not.toContain("/Users/mac-mini");
+  });
+
+  it("agent-loop binary inspection reads only a bounded prefix", () => {
+    const fakeBinDir = mkdtempSync(join(tmpdir(), "agent-loop-large-binary-bin-"));
+    writeFileSync(
+      join(fakeBinDir, "agent-loop"),
+      `#!/bin/sh\n${"x".repeat(140 * 1024)}\nnode /Users/mac-mini/projects/codex-auto-PR-loop-plusin/plugins/autonomous-pr-loop/bin/agent-loop.mjs "$@"\n`,
+      { mode: 0o755 }
+    );
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
+
+    let result: ReturnType<typeof inspectAgentLoopBinary>;
+    try {
+      result = inspectAgentLoopBinary("/expected/package");
+    } finally {
+      process.env.PATH = oldPath;
+    }
+
+    expect(result.readTruncated).toBe(true);
+    expect(result.legacyPrivateRepoReferences).toEqual([]);
   });
 
   it("doctor reports invalid hook binding registry as a warning instead of crashing", async () => {

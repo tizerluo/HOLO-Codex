@@ -5,6 +5,16 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
+const codexHookEvents = [
+  "PreToolUse",
+  "PostToolUse",
+  "UserPromptSubmit",
+  "Stop",
+  "SessionStart",
+  "PreCompact",
+  "PostCompact",
+  "PermissionRequest"
+];
 
 describe("plugin metadata", () => {
   it("root package exposes the npm-ready agent-loop bin and runtime metadata", () => {
@@ -86,6 +96,25 @@ describe("plugin metadata", () => {
     });
   });
 
+  it("bundled hooks config uses an empty Codex plugin hooks schema", () => {
+    const hooksConfig = readJson("plugins/autonomous-pr-loop/hooks/hooks.json");
+
+    expect(isRecord(hooksConfig)).toBe(true);
+    if (!isRecord(hooksConfig)) return;
+    const hooks = hooksConfig.hooks;
+    expect(isRecord(hooks)).toBe(true);
+    if (!isRecord(hooks)) return;
+    for (const event of codexHookEvents) {
+      expect(hooksConfig).not.toHaveProperty(event);
+      expect(hooks).not.toHaveProperty(event);
+    }
+    expect(Object.keys(hooksConfig).sort()).toEqual(["hooks"]);
+    expect(Object.keys(hooks).sort()).toEqual([]);
+    expect(JSON.stringify(hooksConfig)).not.toContain("${PLUGIN_ROOT}");
+    expect(JSON.stringify(hooksConfig)).not.toContain("hooks/dist/");
+    expect(JSON.stringify(hooksConfig)).not.toContain("node ./hooks/dist/");
+  });
+
   it("npm pack dry-run keeps required runtime files and excludes private/dev files", () => {
     const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], {
       cwd: repoRoot,
@@ -99,6 +128,7 @@ describe("plugin metadata", () => {
       "package.json",
       "plugins/autonomous-pr-loop/bin/agent-loop.mjs",
       "plugins/autonomous-pr-loop/core/cli.ts",
+      "plugins/autonomous-pr-loop/hooks/hooks.json",
       "plugins/autonomous-pr-loop/hooks/dist/pre-tool-use.js",
       "plugins/autonomous-pr-loop/ui/index.html",
       "plugins/autonomous-pr-loop/ui/src/main.tsx",
