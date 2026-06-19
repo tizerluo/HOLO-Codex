@@ -4,21 +4,21 @@
 
 ![HOLO-Codex README hero](./assets/brand/holo-codex-readme-hero.png)
 
-HOLO-Codex 是 **Human On Loop Codex** 的缩写，是一个本地优先的 Codex 插件，用来监督可恢复的 PR 交付循环。人设定目标和边界、观察进展，并只在真实 gate 需要关注时回到环上。
+HOLO-Codex 是 **Human On Loop Codex** 的缩写，它把长流程 Codex workflow 变成可观察、可恢复、可人工接管的 loop。人设定目标和边界、观察进展，并只在真实 gate 需要关注时回到环上。
 
-Supervisor 负责仓库状态、Git/GitHub 生命周期、policy gates、worker 编排、Codex hooks、MCP control plane 和本地 dashboard。Worker 只做受控实现并返回结构化输出。
+Supervisor 负责持久化 workflow 状态、evidence、gates、worker 编排、Codex hooks、MCP control plane 和本地 dashboard。Worker 只做受控任务并返回结构化输出。
 
 ## 提供能力
 
 - `plugins/autonomous-pr-loop/` 下的 Codex 插件。
-- `agent-loop` CLI：管理本地 loop 状态、hooks、dashboard、交付 evidence 和可回滚本地安装。
+- `agent-loop` CLI：管理本地 loop 状态、hooks、dashboard、workflow evidence 和可回滚本地安装。
 - `.agent-loop/` 下的本地 SQLite 状态。
-- 本地 dashboard：Mission Control、workflow board、Observability Console、Gate、PR、CI、Review、Worker、Artifact、Notifications、Recovery、Policy Config、主题模式。
+- 本地 dashboard：Mission Control、workflow board、Observability Console、Gate、Review/CI、Worker、Artifact、Notifications、Recovery、Policy Config、主题模式。
 - stdio MCP control plane。
 - 用于 policy 检查和 observability 的 Codex hooks。
 - TypeScript + Vitest 测试套件。
 - `zh-CN`、`en-US`、`system` 双语显示支持。
-- workflow profile、role profile、`pr-loop` 和 `generic-loop`。
+- workflow profile、role profile、`generic-loop`，以及第一个内置 workflow：`pr-loop`。
 
 这不是托管服务，不提供 GitHub webhook daemon 或云端 worker。
 
@@ -35,9 +35,11 @@ HOLO-Codex 是公开产品名。一些稳定运行时标识会继续保留旧名
 
 这些是兼容标识，不是第二个产品名。
 
-## Loop Workflow
+## 第一个工作流：PR 交付
 
-典型 PR 交付流程：
+PR 交付是 HOLO-Codex 随附的第一个完整 workflow，也是 loop 模型最强的样板，但不是产品边界。
+
+典型流程：
 
 ```text
 sync main
@@ -55,7 +57,15 @@ cleanup
 
 Dashboard 和 MCP tools 读取持久化 loop 状态，不依赖聊天历史。
 
+同一套 control plane 也可以承载其他长流程 Codex workflow，例如 release 准备、仓库卫生审计、安全审查、文档发布、迁移、评测和客户 issue 分诊。
+
 ## 安装
+
+公开源码入口：
+
+```text
+https://github.com/tizerluo/HOLO-Codex
+```
 
 依赖：
 
@@ -66,21 +76,19 @@ Dashboard 和 MCP tools 读取持久化 loop 状态，不依赖聊天历史。
 - Codex CLI / plugin support
 - 可选但推荐：GitNexus，使用 `npx gitnexus`
 
-安装依赖：
+从源码安装：
 
 ```bash
+git clone https://github.com/tizerluo/HOLO-Codex.git
+cd HOLO-Codex
 pnpm install
-```
-
-开发期如果要本地全局使用 CLI，在插件仓库里安装一次：
-
-```bash
 pnpm build:hooks
+# 将 /path/to/repo 替换成你要让 HOLO-Codex 监督的目标仓库。
 pnpm agent-loop local install --repo /path/to/repo
 agent-loop --repo /path/to/repo status
 ```
 
-`pnpm agent-loop ...` 是插件仓库内的开发命令。`agent-loop ...` 是全局安装后从任意目录日常使用的便捷命令。当前 package 仍保持 private，暂不发布 npm。
+`pnpm agent-loop ...` 是源码 checkout 内的命令。`agent-loop ...` 是本地安装后从任意目录日常使用的全局命令。当前 release 的公开分发路径是 source/local install；npm 尚未发布。
 
 `agent-loop local install` 会先 snapshot Codex hooks 状态，再安装全局 CLI 和 hook router，并打印对应 rollback 命令。用 `agent-loop local snapshots prune --keep 10` 预览旧 snapshot 清理；确认要删除时再加 `--apply`。
 
@@ -182,6 +190,7 @@ pnpm lint
 
 - [安装](./docs/install.md)
 - [Local Release Readiness](./docs/local-release-readiness.md)
+- [Source Release Checklist](./docs/release-checklist.md)
 - [自举维护流程](./docs/self-bootstrap.md)
 - [Agent-loop-first Delivery Audit Checklist](./docs/checklists/agent-loop-first-delivery-audit.md)
 - [generic-loop 仓库卫生审计示例](./docs/examples/generic-loop-repo-hygiene.md)

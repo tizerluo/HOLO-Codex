@@ -4,21 +4,21 @@
 
 ![HOLO-Codex README hero](./assets/brand/holo-codex-readme-hero.png)
 
-HOLO-Codex, short for **Human On Loop Codex**, is a local-first Codex plugin for supervising recoverable PR delivery loops. The operator sets goals and boundaries, observes progress, and steps in only when a real gate needs attention.
+HOLO-Codex, short for **Human On Loop Codex**, turns long-running Codex workflows into observable, recoverable, human-on-loop systems. The operator sets goals and boundaries, observes progress, and steps in only when a real gate needs attention.
 
-The supervisor owns repository state, Git/GitHub lifecycle, policy gates, worker orchestration, Codex hooks, the MCP control plane, and the local dashboard. Workers perform scoped implementation and return structured output.
+The supervisor owns durable workflow state, evidence, gates, worker orchestration, Codex hooks, the MCP control plane, and the local dashboard. Workers perform scoped tasks and return structured output.
 
 ## What It Provides
 
 - A Codex plugin under `plugins/autonomous-pr-loop/`.
-- The `agent-loop` CLI for local loop state, hooks, dashboard, delivery evidence, and rollback-safe local install.
+- The `agent-loop` CLI for local loop state, hooks, dashboard, workflow evidence, and rollback-safe local install.
 - Local SQLite state under `.agent-loop/`.
-- A local dashboard for Mission Control, workflow board, observability, gates, PR/CI/review state, workers, artifacts, recovery, notifications, policy config, and theme modes.
+- A local dashboard for Mission Control, workflow board, observability, gates, review/CI state, workers, artifacts, recovery, notifications, policy config, and theme modes.
 - stdio MCP control plane.
 - Codex hooks for policy checks and observability.
 - TypeScript + Vitest test suite.
 - Bilingual display support for `zh-CN`, `en-US`, and `system` locale selection.
-- Workflow profiles, role profiles, `pr-loop`, and `generic-loop`.
+- Workflow profiles, role profiles, `generic-loop`, and the first bundled workflow: `pr-loop`.
 
 This is not a hosted service. It does not run GitHub webhooks or cloud workers.
 
@@ -35,9 +35,11 @@ HOLO-Codex is the public product name. Some stable runtime identifiers intention
 
 Do not treat those names as a second product. They are compatibility identifiers.
 
-## Loop Workflow
+## First Workflow: PR Delivery
 
-Typical PR delivery flow:
+PR delivery is the first complete workflow shipped with HOLO-Codex. It is the strongest sample of the loop model, not the product boundary.
+
+Typical flow:
 
 ```text
 sync main
@@ -55,7 +57,15 @@ cleanup
 
 The dashboard and MCP tools read persisted loop state. They do not rely on chat history.
 
+The same control-plane model can support other long-running Codex workflows such as release preparation, repo hygiene, security review, docs publishing, migrations, evaluations, and customer-issue triage.
+
 ## Install
+
+Canonical public source:
+
+```text
+https://github.com/tizerluo/HOLO-Codex
+```
 
 Requirements:
 
@@ -66,21 +76,19 @@ Requirements:
 - Codex CLI / plugin support
 - Optional but recommended: GitNexus via `npx gitnexus`
 
-Install dependencies:
+Install from source:
 
 ```bash
+git clone https://github.com/tizerluo/HOLO-Codex.git
+cd HOLO-Codex
 pnpm install
-```
-
-For local global CLI use during development, install this repository once:
-
-```bash
 pnpm build:hooks
+# Replace /path/to/repo with the repository you want HOLO-Codex to supervise.
 pnpm agent-loop local install --repo /path/to/repo
 agent-loop --repo /path/to/repo status
 ```
 
-`pnpm agent-loop ...` is the development command from this repository. `agent-loop ...` is the global convenience command for day-to-day use from any directory. npm publishing is not enabled yet because this package remains private.
+`pnpm agent-loop ...` is the source checkout command. `agent-loop ...` is the global convenience command for day-to-day use from any directory after local install. npm publishing is not enabled yet; source/local install is the supported public distribution path for this release.
 
 `agent-loop local install` snapshots Codex hook state before installing the global CLI and hook router, then prints the matching rollback command. Use `agent-loop local snapshots prune --keep 10` to preview old snapshot cleanup, and add `--apply` only when you want to delete valid old snapshots.
 
@@ -182,6 +190,7 @@ More docs:
 
 - [Install](./docs/install.md)
 - [Local Release Readiness](./docs/local-release-readiness.md)
+- [Source Release Checklist](./docs/release-checklist.md)
 - [Self-bootstrap workflow](./docs/self-bootstrap.md)
 - [Agent-loop-first Delivery Audit Checklist](./docs/checklists/agent-loop-first-delivery-audit.md)
 - [Generic-loop repo hygiene example](./docs/examples/generic-loop-repo-hygiene.md)

@@ -25,8 +25,10 @@ HOLO-Codex is the public product name. The `agent-loop` CLI, `.agent-loop/` runt
 - Run focused tests for touched areas, then `pnpm lint` and `pnpm test`.
 - If GitNexus is configured, inspect impact before risky symbol edits and run detect before committing:
 
+Use the GitNexus repo id configured on your machine:
+
 ```bash
-npx gitnexus detect-changes --repo codex-auto-PR-loop-plusin --scope staged
+npx gitnexus detect-changes --repo <indexed-repo-id> --scope staged
 ```
 
 ## Maintainer Delivery Loop

@@ -27,10 +27,13 @@ describe("plugin metadata", () => {
       skills: "./skills/",
       interface: {
         displayName: "HOLO-Codex",
-        shortDescription: expect.any(String),
+        shortDescription: "Turn long-running Codex workflows into observable Human On Loop systems.",
+        longDescription: expect.stringContaining("first bundled PR delivery workflow"),
+        developerName: "tizerluo",
         category: "Engineering",
         capabilities: ["Write"],
-        defaultPrompt: ["进入 HOLO-Codex，继续跑到 gate"]
+        defaultPrompt: ["进入 HOLO-Codex，继续跑到 gate"],
+        screenshots: ["../../../assets/brand/holo-codex-plugin-card.png"]
       }
     });
   });

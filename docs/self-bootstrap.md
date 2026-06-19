@@ -14,7 +14,7 @@ git switch main
 git pull --ff-only origin main
 pnpm agent-loop status --json
 pnpm agent-loop observe --json
-gh issue list --repo OWNER/HOLO-Codex --state open --limit 30
+gh issue list --repo tizerluo/HOLO-Codex --state open --limit 30
 ```
 
 如果目标是审计一次 dashboard-first 或 agent-loop-first 交付，使用 [Agent-loop-first Delivery Audit Checklist](./checklists/agent-loop-first-delivery-audit.md) 记录检查动作、证据位置和 PASS/PARTIAL/GAP 结论。
@@ -52,9 +52,9 @@ pnpm agent-loop resume
 pnpm agent-loop init
 pnpm agent-loop install-hooks --repo "$PWD" --json
 pnpm agent-loop delivery bind \
-  --issue 46 \
-  --title "Connect pr-delivery-loop to workflow evidence" \
-  --url https://github.com/OWNER/HOLO-Codex/issues/46 \
+  --issue ISSUE_NUMBER \
+  --title "Issue title" \
+  --url https://github.com/tizerluo/HOLO-Codex/issues/ISSUE_NUMBER \
   --json
 ```
 

@@ -6,9 +6,11 @@ English: Install the local-first plugin, configure MCP/hook integration, then in
 
 See also: [README](../README.md) / [中文 README](../README.zh-CN.md) / [Local Release Readiness](./local-release-readiness.md).
 
-## Install Dependencies
+## Source Install
 
 ```bash
+git clone https://github.com/tizerluo/HOLO-Codex.git
+cd HOLO-Codex
 pnpm install
 pnpm build:hooks
 ```
@@ -20,17 +22,18 @@ Development CLI options:
 pnpm agent-loop status
 
 # Safe local install with snapshot/rollback
+# Replace /path/to/repo with the repository you want HOLO-Codex to supervise.
 pnpm agent-loop local install --repo /path/to/repo
 agent-loop --repo /path/to/repo status
 ```
 
-The package remains private in this phase. `agent-loop local install` performs the local path global installation, snapshots Codex hook state, checks for accidental manifest churn, installs the hook router, and prints a rollback command. npm publishing is a future packaging decision. If pnpm reports that the global bin directory is not in `PATH`, add that directory to `PATH` before installing or use a shell profile managed by `pnpm setup`.
+The canonical public source is `https://github.com/tizerluo/HOLO-Codex`. The package remains private in this phase, so source/local install is the supported public distribution path. `agent-loop local install` performs the local path global installation, snapshots Codex hook state, checks for accidental manifest churn, installs the hook router, and prints a rollback command. npm publishing is handled by later packaging work. If pnpm reports that the global bin directory is not in `PATH`, add that directory to `PATH` before installing or use a shell profile managed by `pnpm setup`.
 
 For the full fresh-machine checklist, including MCP env, hooks, dashboard login, and smoke tests, use [Local Release Readiness](./local-release-readiness.md).
 
 ## Enable The Plugin
 
-Add this repository as a local Codex plugin marketplace:
+Add the source checkout as a local Codex plugin marketplace:
 
 ```bash
 codex plugin marketplace add /path/to/HOLO-Codex
