@@ -399,6 +399,46 @@ describe("dashboard render", () => {
     expect(workflowBoard).toHaveBeenNthCalledWith(2, { runId: "run-1" });
   });
 
+  it("renders every cleanup checklist row from workflow board data", async () => {
+    const cleanupChecks: WorkflowBoard["cleanupChecks"] = [
+      { id: "pr_merged", label: "PR merged", status: "passed", evidence: "PR was merged.", owner: "GitHub" },
+      { id: "switched_main", label: "Switched to main", status: "passed", evidence: "Switched to main.", owner: "Codex" },
+      { id: "pulled_latest", label: "Pulled latest", status: "passed", evidence: "Pulled latest main.", owner: "Codex" },
+      { id: "gitnexus_reindexed", label: "GitNexus index rebuilt", status: "passed", evidence: "GitNexus was reindexed.", owner: "GitNexus" },
+      { id: "worktree_clean", label: "Worktree clean", status: "passed", evidence: "Worktree is clean.", owner: "Codex" },
+      { id: "next_issue_selected", label: "Next issue selected", status: "passed", evidence: "Next issue selected.", owner: "Codex" }
+    ];
+    const board = workflowBoardData({ activeStageId: "cleanup", summary: "Cleanup evidence visible." });
+    board.cleanupChecks = cleanupChecks;
+    board.stages = board.stages.map((stage) => stage.id === "cleanup"
+      ? {
+        ...stage,
+        substages: cleanupChecks.map((check) => ({
+          id: check.id,
+          label: check.label,
+          status: "done",
+          evidenceCounts: { ...emptyWorkflowEvidenceCounts(), events: 1 },
+          latestEvidence: [],
+          requiredEvidence: []
+        }))
+      }
+      : stage);
+    const workflowBoard = vi.fn().mockResolvedValue({ ok: true, data: board });
+
+    render(
+      <MissionControl
+        data={fixture("RUNNING")}
+        api={{ ...noopApi(), workflowBoard }}
+        stale={false}
+        locale="en-US"
+      />
+    );
+
+    expect(await screen.findByText("Cleanup checklist")).toBeTruthy();
+    expect((await screen.findAllByText("Next issue selected")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Worktree is clean.")).toBeTruthy();
+  });
+
   it("shows workflow stage previews on hover and closes them on mouse leave", async () => {
     window.history.replaceState({}, "", "/?fixture=workflow-review-active");
     render(<App />);

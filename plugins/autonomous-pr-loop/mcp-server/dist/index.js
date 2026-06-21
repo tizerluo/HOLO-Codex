@@ -8299,7 +8299,7 @@ function buildStage(input) {
     status,
     actorChips: actorChipsForStage(input.definition.id, status, input.profileRoleMapping, input.stageMetadata),
     evidenceCounts: counts,
-    substages: input.definition.substages.map((substage, substageIndex) => ({
+    substages: input.definition.id === "cleanup" ? cleanupSubstages(input.definition, input.input, input.evidenceRefs, status) : input.definition.substages.map((substage, substageIndex) => ({
       ...substage,
       status: substageIndex === 0 && status === "active" ? "active" : status === "done" ? "done" : "pending",
       evidenceCounts: counts,
@@ -8802,14 +8802,29 @@ function satisfiedReviewEvidence(events) {
   return allClear ? "all required structured reviews passed without P0/P1/P2 evidence" : void 0;
 }
 function cleanupRows(input) {
+  return cleanupSubstageRows(input);
+}
+function cleanupSubstages(definition, input, refs, stageStatus) {
+  const rows = cleanupSubstageRows(input);
+  const firstIncompleteIndex = rows.findIndex((row) => row.status !== "passed" && row.status !== "skipped");
+  return definition.substages.map((substage, index) => {
+    const row = rows.find((item) => item.id === substage.id);
+    const latestEvidence = cleanupEvidenceRefs(input.events, refs, substage.id);
+    return {
+      ...substage,
+      status: row ? cleanupSubstageStatus(row, stageStatus, index === firstIncompleteIndex) : "pending",
+      evidenceCounts: evidenceCounts(latestEvidence),
+      latestEvidence,
+      requiredEvidence: []
+    };
+  });
+}
+function cleanupSubstageRows(input) {
   const evidence = cleanupEvidenceBySubstage(input.events);
-  return [
-    cleanupCheck("pr_merged", "PR merged", "GitHub", evidence, input.pr?.state === "MERGED", input.pr?.state ?? "no PR link"),
-    cleanupCheck("switched_main", "Switched to main", "Codex", evidence),
-    cleanupCheck("pulled_latest", "Pulled latest", "Codex", evidence),
-    cleanupCheck("gitnexus_reindexed", "GitNexus index rebuilt", "GitNexus", evidence),
-    cleanupCheck("worktree_clean", "Worktree clean", "Codex", evidence, input.run?.worktreeClean === true, String(input.run?.worktreeClean ?? "unknown"))
-  ];
+  return cleanupDefinition().substages.map((substage) => {
+    const fallback = cleanupFallback(input, substage.id);
+    return cleanupCheck(substage.id, substage.label, cleanupOwner(substage.id), evidence, fallback.passed, fallback.evidence);
+  });
 }
 function cleanupCheck(id, label, owner, evidence, fallbackPassed = false, fallbackEvidence = "no appended evidence") {
   const event = evidence.get(id);
@@ -8817,6 +8832,39 @@ function cleanupCheck(id, label, owner, evidence, fallbackPassed = false, fallba
     return { id, label, status: "passed", evidence: event.message, owner };
   }
   return { id, label, status: fallbackPassed ? "passed" : "pending", evidence: fallbackEvidence, owner };
+}
+function cleanupSubstageStatus(row, stageStatus, isFirstIncomplete) {
+  if (row.status === "passed") return "done";
+  if (row.status === "failed") return "failed";
+  if (row.status === "blocked") return "blocked";
+  if (row.status === "skipped") return "skipped";
+  if (stageStatus === "active" && isFirstIncomplete) return "active";
+  return "pending";
+}
+function cleanupFallback(input, substageId) {
+  if (substageId === "pr_merged") {
+    return { passed: input.pr?.state === "MERGED", evidence: input.pr?.state ?? "no PR link" };
+  }
+  if (substageId === "worktree_clean") {
+    return { passed: input.run?.worktreeClean === true, evidence: String(input.run?.worktreeClean ?? "unknown") };
+  }
+  return { passed: false, evidence: "no appended evidence" };
+}
+function cleanupOwner(substageId) {
+  if (substageId === "pr_merged") return "GitHub";
+  if (substageId === "gitnexus_reindexed") return "GitNexus";
+  return "Codex";
+}
+function cleanupEvidenceRefs(events, refs, substageId) {
+  const eventIds = new Set(events.filter((event) => event.kind === WORKFLOW_EVIDENCE_KIND && payloadStage(event) === "cleanup" && payloadString(event, "substageId") === substageId).map((event) => event.id));
+  return refs.filter((ref) => eventIds.has(ref.id)).slice(0, 3);
+}
+function cleanupDefinition() {
+  const definition = STAGE_BY_ID.get("cleanup");
+  if (!definition) {
+    throw new AgentLoopError("invalid_config", "cleanup workflow stage definition is missing.");
+  }
+  return definition;
 }
 function cleanupEvidenceBySubstage(events) {
   const bySubstage = /* @__PURE__ */ new Map();
