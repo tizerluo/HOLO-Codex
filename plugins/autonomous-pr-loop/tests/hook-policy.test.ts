@@ -67,6 +67,10 @@ describe("hook policy", () => {
       { file: "sh", args: ["-c", "git reset --hard"] },
       { file: "git", args: ["clean", "-fd"] },
       { file: "git", args: ["push", "--force-with-lease"] },
+      { file: "git", args: ["push", "--mirror"] },
+      { file: "git", args: ["push", "-u", "-d", "origin", "branch"] },
+      { file: "git", args: ["push", "origin", "+main"] },
+      { file: "git", args: ["push", "origin", ":main"] },
       { file: "git", args: ["switch", "main", "--force"] },
       { file: "git", args: ["grep", "-O", "sh", "pattern"] },
       { file: "git", args: ["grep", "--open-files-in-pager=sh", "pattern"] },
@@ -147,6 +151,196 @@ describe("hook policy", () => {
 
     expect(prerequisiteDecision.allow).toBe(false);
     expect(prerequisiteDecision.matchedPolicy).toBe("commit_push_prerequisite_gate");
+  });
+
+  it("allows lifecycle commands only with an active audited maintainer override", () => {
+    const repoRoot = tempRepo();
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const run = storage.createRun("RUNNING", { currentState: "SELF_CHECK" });
+    storage.recordRunCheck({ runId: run.id, kind: "self_check", status: "passed" });
+    storage.recordRunCheck({ runId: run.id, kind: "gitnexus_detect_changes", status: "passed" });
+    storage.appendDecision({
+      runId: run.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: new Date(Date.now() + 60_000).toISOString(), reason: "release" }
+    });
+
+    const publish = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "git", args: ["commit", "-m", "x"] }
+    });
+    const merge = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "gh", args: ["pr", "merge", "1", "--merge"] }
+    });
+    storage.close();
+
+    expect(publish.allow).toBe(true);
+    expect(publish.matchedPolicy).toBe("maintainer_override:publish");
+    expect(merge.allow).toBe(false);
+    expect(merge.matchedPolicy).toBe("merge_state_gate");
+  });
+
+  it("allows publish override when required verification evidence is complete", () => {
+    const repoRoot = tempRepo();
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const run = storage.createRun("RUNNING", { currentState: "SELF_CHECK" });
+    for (const substageId of ["lint", "full_tests", "gitnexus_detect"]) {
+      storage.appendEvent({
+        runId: run.id,
+        kind: "workflow_stage_evidence",
+        message: `${substageId} passed.`,
+        payload: { stageId: "verify", substageId, status: "done", actor: "codex", source: "test" }
+      });
+    }
+    storage.appendDecision({
+      runId: run.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: new Date(Date.now() + 60_000).toISOString(), reason: "verified evidence" }
+    });
+
+    const decision = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "git", args: ["push", "-u", "origin", "branch"] }
+    });
+    storage.close();
+
+    expect(decision.allow).toBe(true);
+    expect(decision.matchedPolicy).toBe("maintainer_override:publish");
+  });
+
+  it("does not let maintainer override bypass publish checks, expiry, or worker policy", () => {
+    const repoRoot = tempRepo();
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const run = storage.createRun("RUNNING", { currentState: "SELF_CHECK" });
+    storage.appendDecision({
+      runId: run.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: new Date(Date.now() + 60_000).toISOString(), reason: "release" }
+    });
+    const missingChecks = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "git", args: ["commit", "-m", "x"] }
+    });
+    const worker = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      isWorker: true,
+      command: { file: "git", args: ["commit", "-m", "x"] }
+    });
+    storage.close();
+    const expiredRepoRoot = tempRepo();
+    const expiredStorage = new SqliteAgentLoopStorage(statePath(expiredRepoRoot));
+    const expiredRun = expiredStorage.createRun("RUNNING", { currentState: "SELF_CHECK" });
+    expiredStorage.recordRunCheck({ runId: expiredRun.id, kind: "self_check", status: "passed" });
+    expiredStorage.recordRunCheck({ runId: expiredRun.id, kind: "gitnexus_detect_changes", status: "passed" });
+    expiredStorage.appendDecision({
+      runId: expiredRun.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: new Date(Date.now() - 60_000).toISOString(), reason: "old" }
+    });
+    expiredStorage.appendDecision({
+      runId: expiredRun.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: "not-a-date", reason: "invalid" }
+    });
+    const expired = evaluateHookPolicy({
+      repoRoot: expiredRepoRoot,
+      storage: expiredStorage,
+      command: { file: "git", args: ["push", "-u", "origin", "branch"] }
+    });
+    expiredStorage.close();
+
+    expect(missingChecks.allow).toBe(false);
+    expect(missingChecks.matchedPolicy).toBe("commit_push_prerequisite_gate");
+    expect(expired.allow).toBe(false);
+    expect(expired.matchedPolicy).toBe("commit_push_state_gate");
+    expect(worker.allow).toBe(false);
+    expect(worker.matchedPolicy).toContain("lifecycle_forbidden");
+  });
+
+  it("scopes maintainer override to the routed run id", () => {
+    const repoRoot = tempRepo();
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const target = storage.createRun("STOPPED", { currentState: "SELF_CHECK" });
+    storage.recordRunCheck({ runId: target.id, kind: "self_check", status: "passed" });
+    storage.recordRunCheck({ runId: target.id, kind: "gitnexus_detect_changes", status: "passed" });
+    const current = storage.createRun("RUNNING", { currentState: "SELF_CHECK" });
+    storage.appendDecision({
+      runId: current.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: new Date(Date.now() + 60_000).toISOString(), reason: "wrong run" }
+    });
+
+    const wrongRun = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      runId: target.id,
+      command: { file: "git", args: ["commit", "-m", "x"] }
+    });
+    storage.appendDecision({
+      runId: target.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for publish.",
+      details: { scope: "publish", expiresAt: new Date(Date.now() + 60_000).toISOString(), reason: "target run" }
+    });
+    const rightRun = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      runId: target.id,
+      command: { file: "git", args: ["commit", "-m", "x"] }
+    });
+    storage.close();
+
+    expect(wrongRun.allow).toBe(false);
+    expect(wrongRun.matchedPolicy).toBe("commit_push_state_gate");
+    expect(rightRun.allow).toBe(true);
+    expect(rightRun.matchedPolicy).toBe("maintainer_override:publish");
+    expect(rightRun.auditDetails).toMatchObject({ overrideScope: "publish" });
+  });
+
+  it("allows merge lifecycle commands with an active merge override", () => {
+    const repoRoot = tempRepo();
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const run = storage.createRun("RUNNING", { currentState: "READY_TO_MERGE" });
+    storage.appendDecision({
+      runId: run.id,
+      kind: "maintainer_override_approved",
+      message: "Maintainer override approved for merge.",
+      details: { scope: "merge", expiresAt: new Date(Date.now() + 60_000).toISOString(), reason: "release" }
+    });
+
+    const decision = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "gh", args: ["pr", "merge", "1", "--merge"] }
+    });
+    const admin = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "gh", args: ["pr", "merge", "1", "--merge", "--admin"] }
+    });
+    const deleteBranch = evaluateHookPolicy({
+      repoRoot,
+      storage,
+      command: { file: "gh", args: ["pr", "merge", "1", "--merge", "-d"] }
+    });
+    storage.close();
+
+    expect(decision.allow).toBe(true);
+    expect(decision.matchedPolicy).toBe("maintainer_override:merge");
+    expect(admin.allow).toBe(false);
+    expect(deleteBranch.allow).toBe(false);
   });
 
   it("uses configured protected paths in the real hook path", () => {

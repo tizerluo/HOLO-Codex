@@ -1632,6 +1632,50 @@ exit 0
     expect(decisions[0]?.kind).toBe("gate_approved");
   });
 
+  it("maintainer-override requires a reason and records an audited approval", async () => {
+    const repoRoot = tempRepo();
+    await runAgentLoopCli(["init"], repoRoot);
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const run = storage.createRun("RUNNING", { currentState: "SELF_CHECK" });
+    storage.close();
+
+    const missing = await runAgentLoopCli(["maintainer-override", "approve", "--scope", "publish"], repoRoot);
+    const approved = await runAgentLoopCli([
+      "maintainer-override",
+      "approve",
+      "--scope",
+      "publish",
+      "--reason",
+      "verified release",
+      "--ttl-minutes",
+      "5",
+      "--json"
+    ], repoRoot);
+    const helpReason = await runAgentLoopCli([
+      "maintainer-override",
+      "approve",
+      "--scope",
+      "merge",
+      "--reason",
+      "--help",
+      "--json"
+    ], repoRoot);
+    const payload = JSON.parse(approved.stdout);
+    const after = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const decisions = after.listDecisions(run.id);
+    const events = after.listEvents();
+    after.close();
+
+    expect(missing.exitCode).toBe(1);
+    expect(approved.exitCode).toBe(0);
+    expect(helpReason.exitCode).toBe(0);
+    expect(payload.scope).toBe("publish");
+    const publishDecision = decisions.find((decision) => JSON.stringify(decision.details).includes("verified release"));
+    expect(publishDecision?.kind).toBe("maintainer_override_approved");
+    expect(JSON.stringify(publishDecision?.details)).toContain("verified release");
+    expect(events.some((event) => event.kind === "maintainer_override_approved")).toBe(true);
+  });
+
   it("treats --help as an approve-gate note value when it follows --note", async () => {
     const repoRoot = tempRepo();
     await runAgentLoopCli(["init"], repoRoot);

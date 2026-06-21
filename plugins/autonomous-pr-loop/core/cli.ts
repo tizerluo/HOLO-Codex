@@ -142,6 +142,9 @@ export async function runAgentLoopCli(
     if (command === "approve-gate") {
       return approveGate(targetRepoRoot, filtered, json, localeOverride);
     }
+    if (command === "maintainer-override") {
+      return maintainerOverride(targetRepoRoot, filtered, json);
+    }
     if (command === "evidence") {
       return evidence(targetRepoRoot, filtered, json, localeOverride);
     }
@@ -189,6 +192,7 @@ function helpResult(json: boolean, usage = "agent-loop <command> [options]"): Cl
     "hooks",
     "local",
     "approve-gate",
+    "maintainer-override",
     "dashboard",
     "evidence",
     "delivery"
@@ -218,6 +222,7 @@ function commandHelpUsage(command: string): string | undefined {
     hooks: "agent-loop hooks install-router|bind|list|doctor|unbind [--session SESSION_ID] [--run RUN_ID] [--json]",
     local: "agent-loop local install|rollback|doctor|snapshots [--repo /path/to/repo] [--snapshot PATH] [--json]",
     "approve-gate": "agent-loop approve-gate <gate-id> --note \"...\" [--next-state STATE] [--json]",
+    "maintainer-override": "agent-loop maintainer-override approve --scope publish|merge --reason \"...\" [--ttl-minutes N] [--run RUN_ID] [--json]",
     dashboard: "agent-loop dashboard [--host 127.0.0.1] [--port 0] [--json]",
     evidence: "agent-loop evidence append --stage STAGE --summary \"...\" [--run RUN_ID] [--substage ID] [--actor ACTOR] [--status STATUS] [--source SOURCE] [--ref REF] [--artifact ID] [--json]",
     delivery: "agent-loop delivery bind|stage [options] [--json]"
@@ -240,7 +245,9 @@ const OPTIONS_WITH_VALUES = new Set([
   "--port",
   "--issue",
   "--ref",
+  "--reason",
   "--run",
+  "--scope",
   "--source",
   "--stage",
   "--status",
@@ -249,6 +256,7 @@ const OPTIONS_WITH_VALUES = new Set([
   "--substage",
   "--summary",
   "--title",
+  "--ttl-minutes",
   "--url",
   "--worker"
 ]);
@@ -918,6 +926,70 @@ function approveGate(repoRoot: string, args: string[], json: boolean, localeOver
   } finally {
     storage.close();
   }
+}
+
+function maintainerOverride(repoRoot: string, args: string[], json: boolean): CliResult {
+  const subcommand = args[1];
+  const scope = optionArg(args, "--scope");
+  const reason = optionArg(args, "--reason");
+  const ttlMinutes = maintainerOverrideTtlMinutes(args);
+  if (subcommand !== "approve") {
+    throw new AgentLoopError("unknown_command", "Usage: agent-loop maintainer-override approve --scope publish|merge --reason \"...\" [--ttl-minutes N] [--run RUN_ID]");
+  }
+  if (scope !== "publish" && scope !== "merge") {
+    throw new AgentLoopError("invalid_config", "maintainer-override approve requires --scope publish|merge.");
+  }
+  if (!reason || reason.trim().length === 0) {
+    throw new AgentLoopError("invalid_config", "maintainer-override approve requires --reason.");
+  }
+  const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+  try {
+    const runId = optionArg(args, "--run") ?? storage.getCurrentRun()?.id;
+    if (!runId) {
+      throw new AgentLoopError("invalid_config", "maintainer-override approve requires an active run or --run.");
+    }
+    if (!storage.getRun(runId)) {
+      throw new AgentLoopError("invalid_config", `maintainer-override run ${runId} was not found.`);
+    }
+    const actor = process.env.USER ?? process.env.LOGNAME ?? "unknown";
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+    const details = {
+      scope,
+      reason,
+      actor,
+      source: "cli",
+      expiresAt,
+      ttlMinutes
+    };
+    const decision = storage.appendDecision({
+      runId,
+      kind: "maintainer_override_approved",
+      message: `Maintainer override approved for ${scope}.`,
+      details
+    });
+    const event = storage.appendEvent({
+      runId,
+      kind: "maintainer_override_approved",
+      message: `Maintainer override approved for ${scope}.`,
+      payload: details
+    });
+    return ok(json, { ok: true, decision, event, scope, expiresAt }, [
+      `maintainer override: ${scope}`,
+      `expires: ${expiresAt}`,
+      `reason: ${reason}`
+    ]);
+  } finally {
+    storage.close();
+  }
+}
+
+function maintainerOverrideTtlMinutes(args: string[]): number {
+  const value = optionArg(args, "--ttl-minutes") ?? "30";
+  const ttl = Number(value);
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > 120) {
+    throw new AgentLoopError("invalid_config", "maintainer-override --ttl-minutes must be an integer from 1 to 120.");
+  }
+  return ttl;
 }
 
 function gateState(details: unknown): string | undefined {

@@ -19,6 +19,7 @@ export interface HookPolicyInput {
   isWorker?: boolean;
   protectedPaths?: string[];
   storage?: AgentLoopStorage;
+  runId?: string;
 }
 
 export interface HookPolicyDecision {
@@ -28,7 +29,18 @@ export interface HookPolicyDecision {
   blockedCommand: string;
   nextAction: string;
   reason: string;
+  auditDetails?: Record<string, unknown>;
 }
+
+type MaintainerOverrideScope = "publish" | "merge";
+
+interface ActiveMaintainerOverride {
+  decisionId: string;
+  scope: MaintainerOverrideScope;
+  expiresAt: string;
+}
+
+const REQUIRED_PUBLISH_EVIDENCE_SUBSTAGES = ["lint", "full_tests", "gitnexus_detect"] as const;
 
 /** Normalize a Codex PreToolUse hook payload into an argv-like command. */
 export function commandFromHookPayload(payload: unknown): HookCommand | undefined {
@@ -72,9 +84,24 @@ export function evaluateHookPolicy(input: HookPolicyInput): HookPolicyDecision {
   if (protectedPath) {
     return deny(blockedCommand, protectedPath, "policy_violation", "Remove protected path changes from the command.");
   }
-  const gate = gatedLifecyclePolicy(command, input.storage);
+  const gate = gatedLifecyclePolicy(command, input.storage, input.runId);
   if (gate) {
     return deny(blockedCommand, gate.policy, gate.gate, gate.nextAction);
+  }
+  const override = activeMaintainerOverride(input.storage, lifecycleOverrideScope(command), input.runId);
+  if (override && matchesHookAllowlist(command)) {
+    return {
+      allow: true,
+      matchedPolicy: `maintainer_override:${override.scope}`,
+      blockedCommand,
+      nextAction: "Continue.",
+      reason: `Maintainer override ${override.decisionId} allows ${blockedCommand} until ${override.expiresAt}.`,
+      auditDetails: {
+        overrideDecisionId: override.decisionId,
+        overrideScope: override.scope,
+        overrideExpiresAt: override.expiresAt
+      }
+    };
   }
   if (!matchesHookAllowlist(command)) {
     return deny(blockedCommand, "command_not_in_hook_allowlist", "policy_violation", "Use agent-loop MCP/CLI control surfaces or an allowlisted read/check command.");
@@ -128,7 +155,13 @@ export function evaluatePreToolUseHook(payload: unknown, repoRoot?: string): Hoo
   try {
     const config = loadConfig(route.binding.repoRoot).config;
     storage = new SqliteAgentLoopStorage(statePath(route.binding.repoRoot));
-    const decision = evaluateHookPolicy({ repoRoot: route.binding.repoRoot, command, storage, protectedPaths: config.protectedPaths });
+    const decision = evaluateHookPolicy({
+      repoRoot: route.binding.repoRoot,
+      command,
+      storage,
+      ...(route.binding.runId ? { runId: route.binding.runId } : {}),
+      protectedPaths: config.protectedPaths
+    });
     recordHookDecision(storage, decision, route.binding.runId);
     return decision;
   } catch (error) {
@@ -169,6 +202,7 @@ function recordHookDecision(storage: AgentLoopStorage, decision: HookPolicyDecis
       allow: decision.allow,
       matchedPolicy: decision.matchedPolicy,
       ...(decision.gate ? { gate: decision.gate } : {}),
+      ...(decision.auditDetails ? { auditDetails: decision.auditDetails } : {}),
       nextAction: decision.nextAction,
       commandLength: command.length,
       commandSha256: createHash("sha256").update(command).digest("hex"),
@@ -229,7 +263,7 @@ function lifecycleCommand(command: HookCommand): boolean {
     command.file === "gh" && command.args[0] === "pr" && ["create", "ready", "merge"].includes(command.args[1] ?? "");
 }
 
-function gatedLifecyclePolicy(command: HookCommand, storage?: AgentLoopStorage): { policy: string; gate: AgentLoopGateKind; nextAction: string } | undefined {
+function gatedLifecyclePolicy(command: HookCommand, storage?: AgentLoopStorage, runId?: string): { policy: string; gate: AgentLoopGateKind; nextAction: string } | undefined {
   const args = stripGitGlobalOptions(command.args);
   const lifecycleCommand = command.file === "git" && args[0] === "commit" ||
     command.file === "git" && args[0] === "push" ||
@@ -245,22 +279,24 @@ function gatedLifecyclePolicy(command: HookCommand, storage?: AgentLoopStorage):
     };
   }
   const current = storage.getCurrentStatus();
-  const state = current.run?.currentState;
-  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && state !== "COMMIT_PUSH_PR") {
+  const run = runId ? storage.getRun(runId) : current.run;
+  const state = run?.currentState;
+  const override = activeMaintainerOverride(storage, lifecycleOverrideScope(command), runId);
+  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && state !== "COMMIT_PUSH_PR" && !override) {
     return {
       policy: "commit_push_state_gate",
       gate: current.gate?.kind ?? "policy_violation",
       nextAction: "Resume agent-loop until COMMIT_PUSH_PR owns publishing."
     };
   }
-  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && !publishPrerequisitesSatisfied(storage)) {
+  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && !publishPrerequisitesSatisfied(storage, runId)) {
     return {
       policy: "commit_push_prerequisite_gate",
       gate: "policy_violation",
       nextAction: "Run SELF_CHECK and GitNexus detect_changes through agent-loop before publishing."
     };
   }
-  if (command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge" && state !== "MERGE") {
+  if (command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge" && state !== "MERGE" && !override) {
     return {
       policy: "merge_state_gate",
       gate: current.gate?.kind ?? "merge_requires_confirmation",
@@ -268,6 +304,45 @@ function gatedLifecyclePolicy(command: HookCommand, storage?: AgentLoopStorage):
     };
   }
   return undefined;
+}
+
+function lifecycleOverrideScope(command: HookCommand): MaintainerOverrideScope | undefined {
+  const args = stripGitGlobalOptions(command.args);
+  if (command.file === "git" && (args[0] === "commit" || args[0] === "push")) {
+    return "publish";
+  }
+  if (command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge") {
+    return "merge";
+  }
+  return undefined;
+}
+
+function activeMaintainerOverride(storage: AgentLoopStorage | undefined, scope: MaintainerOverrideScope | undefined, runId?: string): ActiveMaintainerOverride | undefined {
+  if (!storage || !scope) {
+    return undefined;
+  }
+  const run = runId ? storage.getRun(runId) : storage.getCurrentRun();
+  if (!run) {
+    return undefined;
+  }
+  return storage.listDecisions(run.id)
+    .map((decision) => {
+      const details = objectDetails(decision.details);
+      const overrideScope = stringValue(details?.scope);
+      const expiresAt = stringValue(details?.expiresAt);
+      if (decision.kind !== "maintainer_override_approved" || !overrideScope || !expiresAt) {
+        return undefined;
+      }
+      if (overrideScope !== scope) {
+        return undefined;
+      }
+      const expiresAtMs = Date.parse(expiresAt);
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+        return undefined;
+      }
+      return { decisionId: decision.id, scope, expiresAt };
+    })
+    .find((override): override is ActiveMaintainerOverride => override !== undefined);
 }
 
 function destructivePolicy(command: HookCommand): string | undefined {
@@ -278,7 +353,11 @@ function destructivePolicy(command: HookCommand): string | undefined {
   if (command.file === "git" && args[0] === "clean" && args.some((arg) => /^-.*f/.test(arg))) {
     return "destructive_git_clean";
   }
-  if (command.file === "git" && args[0] === "push" && args.some((arg) => ["-f", "--force", "--force-with-lease"].includes(arg))) {
+  if (command.file === "git" && args[0] === "push" && args.some((arg) =>
+    ["-f", "-d", "--force", "--force-with-lease", "--mirror", "--delete"].includes(arg) ||
+    arg.startsWith("+") ||
+    /^:[^:]+/.test(arg)
+  )) {
     return "destructive_git_force_push";
   }
   if (command.file === "gh" && command.args[0] === "repo" && command.args[1] === "delete") {
@@ -324,11 +403,12 @@ function matchesHookAllowlist(command: HookCommand): boolean {
       args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") ||
       args[0] === "add" && args[1] === "--" ||
       args[0] === "commit" && args[1] === "-m" ||
-      args[0] === "push" && args[1] === "-u";
+      args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
   }
   if (command.file === "gh") {
     return command.args[0] === "auth" && command.args[1] === "status" ||
       command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") ||
+      command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) ||
       command.args[0] === "api" && command.args[1] === "graphql";
   }
   if (command.file === "pnpm") {
@@ -361,12 +441,35 @@ function matchesGitGrepAllowlist(args: string[]): boolean {
   );
 }
 
+function matchesGitPushAllowlist(args: string[]): boolean {
+  return args.length >= 3 &&
+    args[0] === "-u" &&
+    args.every((arg) => !["-f", "-d", "--force", "--force-with-lease", "--mirror", "--delete"].includes(arg) && !arg.startsWith("+") && !/^:[^:]+/.test(arg));
+}
+
+function matchesGhPrMergeAllowlist(args: string[]): boolean {
+  const allowedFlags = new Set(["--merge", "--squash", "--rebase", "--body", "--subject"]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (["--admin", "--auto", "--delete-branch", "-d"].includes(arg)) {
+      return false;
+    }
+    if (arg.startsWith("--") && !allowedFlags.has(arg)) {
+      return false;
+    }
+    if ((arg === "--body" || arg === "--subject") && args[index + 1]) {
+      index += 1;
+    }
+  }
+  return args.some((arg) => ["--merge", "--squash", "--rebase"].includes(arg));
+}
+
 function isApplyPatchCommand(command: HookCommand): boolean {
   return command.file === "apply_patch" || command.raw?.startsWith("*** Begin Patch") === true;
 }
 
 function matchesAgentLoopAllowlist(args: string[]): boolean {
-  if (["status", "doctor", "logs", "observe", "timeline", "workers"].includes(args[0] ?? "")) {
+  if (["status", "doctor", "logs", "observe", "timeline", "workers", "stop"].includes(args[0] ?? "")) {
     return true;
   }
   if (args[0] === "local") {
@@ -380,6 +483,9 @@ function matchesAgentLoopAllowlist(args: string[]): boolean {
   }
   if (args[0] === "evidence") {
     return args[1] === "append";
+  }
+  if (args[0] === "maintainer-override") {
+    return args[1] === "approve";
   }
   return false;
 }
@@ -480,12 +586,35 @@ function stripGitGlobalOptions(args: string[]): string[] {
   return result;
 }
 
-function publishPrerequisitesSatisfied(storage: AgentLoopStorage): boolean {
-  const run = storage.getCurrentRun();
+function publishPrerequisitesSatisfied(storage: AgentLoopStorage, runId?: string): boolean {
+  const run = runId ? storage.getRun(runId) : storage.getCurrentRun();
   if (!run) {
     return false;
   }
-  return storage.hasRunCheck(run.id, "self_check") && storage.hasRunCheck(run.id, "gitnexus_detect_changes");
+  if (storage.hasRunCheck(run.id, "self_check") && storage.hasRunCheck(run.id, "gitnexus_detect_changes")) {
+    return true;
+  }
+  return publishWorkflowEvidenceSatisfied(storage, run.id);
+}
+
+function publishWorkflowEvidenceSatisfied(storage: AgentLoopStorage, runId: string): boolean {
+  const completed = new Set<string>();
+  for (const event of storage.listEvents(200)) {
+    const payload = objectDetails(event.payload);
+    if (
+      event.runId !== runId ||
+      event.kind !== "workflow_stage_evidence" ||
+      stringValue(payload?.stageId) !== "verify" ||
+      stringValue(payload?.status) !== "done"
+    ) {
+      continue;
+    }
+    const substageId = stringValue(payload?.substageId);
+    if (substageId) {
+      completed.add(substageId);
+    }
+  }
+  return REQUIRED_PUBLISH_EVIDENCE_SUBSTAGES.every((substageId) => completed.has(substageId));
 }
 
 function basename(value: string): string {
@@ -494,4 +623,8 @@ function basename(value: string): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function objectDetails(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

@@ -1629,6 +1629,9 @@ var SqliteAgentLoopStorage = class {
         );
       }
       const run = this.getRun(runId);
+      if (!run) {
+        throw new AgentLoopError("storage_error", `Run not found: ${runId}`);
+      }
       this.db.prepare(
         `insert into states (run_id, status, state, version, payload_json, created_at)
            values (?, ?, ?, ?, null, ?)`
@@ -2402,10 +2405,7 @@ var SqliteAgentLoopStorage = class {
          from runs
          where id = ?`
     ).get(runId);
-    if (!row) {
-      throw new AgentLoopError("storage_error", `Run not found: ${runId}`);
-    }
-    return fromRunRow(row);
+    return row ? fromRunRow(row) : void 0;
   }
   getActiveRun() {
     const row = this.db.prepare(
@@ -3073,6 +3073,7 @@ function toStorageError(error, message) {
 }
 
 // plugins/autonomous-pr-loop/core/hook-policy.ts
+var REQUIRED_PUBLISH_EVIDENCE_SUBSTAGES = ["lint", "full_tests", "gitnexus_detect"];
 function commandFromHookPayload(payload) {
   if (!isRecord(payload)) {
     return void 0;
@@ -3110,9 +3111,24 @@ function evaluateHookPolicy(input2) {
   if (protectedPath) {
     return deny(blockedCommand, protectedPath, "policy_violation", "Remove protected path changes from the command.");
   }
-  const gate = gatedLifecyclePolicy(command, input2.storage);
+  const gate = gatedLifecyclePolicy(command, input2.storage, input2.runId);
   if (gate) {
     return deny(blockedCommand, gate.policy, gate.gate, gate.nextAction);
+  }
+  const override = activeMaintainerOverride(input2.storage, lifecycleOverrideScope(command), input2.runId);
+  if (override && matchesHookAllowlist(command)) {
+    return {
+      allow: true,
+      matchedPolicy: `maintainer_override:${override.scope}`,
+      blockedCommand,
+      nextAction: "Continue.",
+      reason: `Maintainer override ${override.decisionId} allows ${blockedCommand} until ${override.expiresAt}.`,
+      auditDetails: {
+        overrideDecisionId: override.decisionId,
+        overrideScope: override.scope,
+        overrideExpiresAt: override.expiresAt
+      }
+    };
   }
   if (!matchesHookAllowlist(command)) {
     return deny(blockedCommand, "command_not_in_hook_allowlist", "policy_violation", "Use agent-loop MCP/CLI control surfaces or an allowlisted read/check command.");
@@ -3163,7 +3179,13 @@ function evaluatePreToolUseHook(payload, repoRoot2) {
   try {
     const config = loadConfig(route.binding.repoRoot).config;
     storage = new SqliteAgentLoopStorage(statePath(route.binding.repoRoot));
-    const decision2 = evaluateHookPolicy({ repoRoot: route.binding.repoRoot, command, storage, protectedPaths: config.protectedPaths });
+    const decision2 = evaluateHookPolicy({
+      repoRoot: route.binding.repoRoot,
+      command,
+      storage,
+      ...route.binding.runId ? { runId: route.binding.runId } : {},
+      protectedPaths: config.protectedPaths
+    });
     recordHookDecision(storage, decision2, route.binding.runId);
     return decision2;
   } catch (error) {
@@ -3201,6 +3223,7 @@ function recordHookDecision(storage, decision2, runId) {
       allow: decision2.allow,
       matchedPolicy: decision2.matchedPolicy,
       ...decision2.gate ? { gate: decision2.gate } : {},
+      ...decision2.auditDetails ? { auditDetails: decision2.auditDetails } : {},
       nextAction: decision2.nextAction,
       commandLength: command.length,
       commandSha256: createHash2("sha256").update(command).digest("hex"),
@@ -3256,7 +3279,7 @@ function lifecycleCommand(command) {
   const args = stripGitGlobalOptions(command.args);
   return command.file === "git" && ["commit", "push", "merge"].includes(args[0] ?? "") || command.file === "gh" && command.args[0] === "pr" && ["create", "ready", "merge"].includes(command.args[1] ?? "");
 }
-function gatedLifecyclePolicy(command, storage) {
+function gatedLifecyclePolicy(command, storage, runId) {
   const args = stripGitGlobalOptions(command.args);
   const lifecycleCommand2 = command.file === "git" && args[0] === "commit" || command.file === "git" && args[0] === "push" || command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge";
   if (!lifecycleCommand2) {
@@ -3270,22 +3293,24 @@ function gatedLifecyclePolicy(command, storage) {
     };
   }
   const current = storage.getCurrentStatus();
-  const state = current.run?.currentState;
-  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && state !== "COMMIT_PUSH_PR") {
+  const run = runId ? storage.getRun(runId) : current.run;
+  const state = run?.currentState;
+  const override = activeMaintainerOverride(storage, lifecycleOverrideScope(command), runId);
+  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && state !== "COMMIT_PUSH_PR" && !override) {
     return {
       policy: "commit_push_state_gate",
       gate: current.gate?.kind ?? "policy_violation",
       nextAction: "Resume agent-loop until COMMIT_PUSH_PR owns publishing."
     };
   }
-  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && !publishPrerequisitesSatisfied(storage)) {
+  if (command.file === "git" && (args[0] === "commit" || args[0] === "push") && !publishPrerequisitesSatisfied(storage, runId)) {
     return {
       policy: "commit_push_prerequisite_gate",
       gate: "policy_violation",
       nextAction: "Run SELF_CHECK and GitNexus detect_changes through agent-loop before publishing."
     };
   }
-  if (command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge" && state !== "MERGE") {
+  if (command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge" && state !== "MERGE" && !override) {
     return {
       policy: "merge_state_gate",
       gate: current.gate?.kind ?? "merge_requires_confirmation",
@@ -3293,6 +3318,41 @@ function gatedLifecyclePolicy(command, storage) {
     };
   }
   return void 0;
+}
+function lifecycleOverrideScope(command) {
+  const args = stripGitGlobalOptions(command.args);
+  if (command.file === "git" && (args[0] === "commit" || args[0] === "push")) {
+    return "publish";
+  }
+  if (command.file === "gh" && command.args[0] === "pr" && command.args[1] === "merge") {
+    return "merge";
+  }
+  return void 0;
+}
+function activeMaintainerOverride(storage, scope, runId) {
+  if (!storage || !scope) {
+    return void 0;
+  }
+  const run = runId ? storage.getRun(runId) : storage.getCurrentRun();
+  if (!run) {
+    return void 0;
+  }
+  return storage.listDecisions(run.id).map((decision2) => {
+    const details = objectDetails(decision2.details);
+    const overrideScope = stringValue2(details?.scope);
+    const expiresAt = stringValue2(details?.expiresAt);
+    if (decision2.kind !== "maintainer_override_approved" || !overrideScope || !expiresAt) {
+      return void 0;
+    }
+    if (overrideScope !== scope) {
+      return void 0;
+    }
+    const expiresAtMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      return void 0;
+    }
+    return { decisionId: decision2.id, scope, expiresAt };
+  }).find((override) => override !== void 0);
 }
 function destructivePolicy(command) {
   const args = stripGitGlobalOptions(command.args);
@@ -3302,7 +3362,9 @@ function destructivePolicy(command) {
   if (command.file === "git" && args[0] === "clean" && args.some((arg) => /^-.*f/.test(arg))) {
     return "destructive_git_clean";
   }
-  if (command.file === "git" && args[0] === "push" && args.some((arg) => ["-f", "--force", "--force-with-lease"].includes(arg))) {
+  if (command.file === "git" && args[0] === "push" && args.some(
+    (arg) => ["-f", "-d", "--force", "--force-with-lease", "--mirror", "--delete"].includes(arg) || arg.startsWith("+") || /^:[^:]+/.test(arg)
+  )) {
     return "destructive_git_force_push";
   }
   if (command.file === "gh" && command.args[0] === "repo" && command.args[1] === "delete") {
@@ -3336,10 +3398,10 @@ function matchesHookAllowlist(command) {
     return true;
   }
   if (command.file === "git") {
-    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "rev-parse" || args[0] === "diff" || ["log", "show"].includes(args[0] ?? "") || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && args[1] === "-u";
+    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "rev-parse" || args[0] === "diff" || ["log", "show"].includes(args[0] ?? "") || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
   }
   if (command.file === "gh") {
-    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "api" && command.args[1] === "graphql";
+    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) || command.args[0] === "api" && command.args[1] === "graphql";
   }
   if (command.file === "pnpm") {
     return command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "build:hooks" || command.args[0] === "build:mcp" || command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1));
@@ -3360,11 +3422,30 @@ function matchesGitGrepAllowlist(args) {
     (arg) => arg === "-O" || arg.startsWith("-O") || arg === "--open-files-in-pager" || arg.startsWith("--open-files-in-pager=")
   );
 }
+function matchesGitPushAllowlist(args) {
+  return args.length >= 3 && args[0] === "-u" && args.every((arg) => !["-f", "-d", "--force", "--force-with-lease", "--mirror", "--delete"].includes(arg) && !arg.startsWith("+") && !/^:[^:]+/.test(arg));
+}
+function matchesGhPrMergeAllowlist(args) {
+  const allowedFlags = /* @__PURE__ */ new Set(["--merge", "--squash", "--rebase", "--body", "--subject"]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (["--admin", "--auto", "--delete-branch", "-d"].includes(arg)) {
+      return false;
+    }
+    if (arg.startsWith("--") && !allowedFlags.has(arg)) {
+      return false;
+    }
+    if ((arg === "--body" || arg === "--subject") && args[index + 1]) {
+      index += 1;
+    }
+  }
+  return args.some((arg) => ["--merge", "--squash", "--rebase"].includes(arg));
+}
 function isApplyPatchCommand(command) {
   return command.file === "apply_patch" || command.raw?.startsWith("*** Begin Patch") === true;
 }
 function matchesAgentLoopAllowlist(args) {
-  if (["status", "doctor", "logs", "observe", "timeline", "workers"].includes(args[0] ?? "")) {
+  if (["status", "doctor", "logs", "observe", "timeline", "workers", "stop"].includes(args[0] ?? "")) {
     return true;
   }
   if (args[0] === "local") {
@@ -3378,6 +3459,9 @@ function matchesAgentLoopAllowlist(args) {
   }
   if (args[0] === "evidence") {
     return args[1] === "append";
+  }
+  if (args[0] === "maintainer-override") {
+    return args[1] === "approve";
   }
   return false;
 }
@@ -3463,18 +3547,38 @@ function stripGitGlobalOptions(args) {
   }
   return result;
 }
-function publishPrerequisitesSatisfied(storage) {
-  const run = storage.getCurrentRun();
+function publishPrerequisitesSatisfied(storage, runId) {
+  const run = runId ? storage.getRun(runId) : storage.getCurrentRun();
   if (!run) {
     return false;
   }
-  return storage.hasRunCheck(run.id, "self_check") && storage.hasRunCheck(run.id, "gitnexus_detect_changes");
+  if (storage.hasRunCheck(run.id, "self_check") && storage.hasRunCheck(run.id, "gitnexus_detect_changes")) {
+    return true;
+  }
+  return publishWorkflowEvidenceSatisfied(storage, run.id);
+}
+function publishWorkflowEvidenceSatisfied(storage, runId) {
+  const completed = /* @__PURE__ */ new Set();
+  for (const event of storage.listEvents(200)) {
+    const payload = objectDetails(event.payload);
+    if (event.runId !== runId || event.kind !== "workflow_stage_evidence" || stringValue2(payload?.stageId) !== "verify" || stringValue2(payload?.status) !== "done") {
+      continue;
+    }
+    const substageId = stringValue2(payload?.substageId);
+    if (substageId) {
+      completed.add(substageId);
+    }
+  }
+  return REQUIRED_PUBLISH_EVIDENCE_SUBSTAGES.every((substageId) => completed.has(substageId));
 }
 function basename(value) {
   return value.replaceAll("\\", "/").split("/").at(-1) ?? value;
 }
 function stringValue2(value) {
   return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function objectDetails(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
 }
 
 // plugins/autonomous-pr-loop/hooks/pre-tool-use.ts
