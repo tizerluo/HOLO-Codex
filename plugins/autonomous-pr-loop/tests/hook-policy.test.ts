@@ -39,16 +39,57 @@ describe("hook policy", () => {
     expect(decision.allow).toBe(true);
   });
 
+  it("allows safe maintainer inspection, edit, and build commands", () => {
+    for (const command of [
+      { file: "rg", args: ["command_not_in_hook_allowlist", "plugins/autonomous-pr-loop/core"] },
+      { file: "apply_patch", args: [] },
+      { file: "git", args: ["log", "--oneline", "-5"] },
+      { file: "git", args: ["show", "--stat", "HEAD"] },
+      { file: "git", args: ["grep", "evaluateHookPolicy"] },
+      { file: "git", args: ["switch", "main"] },
+      { file: "gh", args: ["pr", "checks", "9"] },
+      { file: "pnpm", args: ["build:hooks"] },
+      { file: "pnpm", args: ["agent-loop", "delivery", "stage", "--run", "run-1"] },
+      { file: "pnpm", args: ["agent-loop", "evidence", "append", "--run", "run-1"] },
+      { file: "***", args: ["Begin", "Patch"], raw: "*** Begin Patch\n*** Update File: x\n+value || true\n*** End Patch" }
+    ]) {
+      const decision = evaluateHookPolicy({ repoRoot: "/repo", command });
+      expect(decision.allow).toBe(true);
+    }
+  });
+
   it("blocks git reset --hard with global -C variants", () => {
     for (const command of [
       { file: "git", args: ["-C", "/repo", "reset", "--hard", "HEAD"] },
       { file: "git", args: ["-c", "advice.detachedHead=false", "reset", "--hard"] },
       { file: "git", args: ["--no-pager", "reset", "--hard"] },
       { file: "env", args: ["git", "push", "-f"] },
-      { file: "sh", args: ["-c", "git reset --hard"] }
+      { file: "sh", args: ["-c", "git reset --hard"] },
+      { file: "git", args: ["clean", "-fd"] },
+      { file: "git", args: ["push", "--force-with-lease"] },
+      { file: "git", args: ["switch", "main", "--force"] },
+      { file: "git", args: ["grep", "-O", "sh", "pattern"] },
+      { file: "git", args: ["grep", "--open-files-in-pager=sh", "pattern"] },
+      { file: "gh", args: ["repo", "delete", "owner/repo"] },
+      { file: "pnpm", args: ["agent-loop", "hooks", "unbind"] },
+      { file: "rg", args: ["--pre", "sh", "pattern"] },
+      { file: "rg", args: ["--pre=sh", "pattern"] }
     ]) {
       const decision = evaluateHookPolicy({ repoRoot: "/repo", command });
       expect(decision.allow).toBe(false);
+    }
+  });
+
+  it("blocks shell compound commands before allowlist matching", () => {
+    for (const command of [
+      { file: "rg", args: ["foo", "&&", "git", "reset", "--hard"], raw: "rg foo && git reset --hard" },
+      { file: "sh", args: ["-c", "rg foo && git reset --hard"] },
+      { file: "bash", args: ["-c", "rg foo || git reset --hard"] },
+      { file: "env", args: ["DEBUG=1", "sh", "-c", "rg foo; git reset --hard"] }
+    ]) {
+      const decision = evaluateHookPolicy({ repoRoot: "/repo", command });
+      expect(decision.allow).toBe(false);
+      expect(decision.matchedPolicy).toBe("shell_control_operator_forbidden");
     }
   });
 

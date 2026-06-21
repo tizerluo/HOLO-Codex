@@ -3090,7 +3090,12 @@ function commandFromHookPayload(payload) {
   return tokenizeCommand(command);
 }
 function evaluateHookPolicy(input2) {
-  const command = unwrapCommand(normalizeCommand(input2.command));
+  const normalized = normalizeCommand(input2.command);
+  const shellControl = shellControlPolicy(normalized);
+  if (shellControl) {
+    return deny(renderCommand(normalized), shellControl, "policy_violation", "Run one allowlisted command at a time without shell control operators.");
+  }
+  const command = unwrapCommand(normalized);
   const blockedCommand = renderCommand(command);
   const destructive = destructivePolicy(command);
   if (destructive) {
@@ -3204,9 +3209,11 @@ function recordHookDecision(storage, decision2, runId) {
   });
 }
 function routeErrorDecision(command, reason) {
-  const normalized = unwrapCommand(normalizeCommand(command));
+  const baseCommand = normalizeCommand(command);
+  const shellControl = shellControlPolicy(baseCommand);
+  const normalized = shellControl ? baseCommand : unwrapCommand(baseCommand);
   const blockedCommand = renderCommand(normalized);
-  const destructive = destructivePolicy(normalized);
+  const destructive = shellControl ?? destructivePolicy(normalized);
   if (destructive || lifecycleCommand(normalized)) {
     return deny(
       blockedCommand,
@@ -3224,9 +3231,11 @@ function routeErrorDecision(command, reason) {
   };
 }
 function routeSessionMismatchDecision(command, reason) {
-  const normalized = unwrapCommand(normalizeCommand(command));
+  const baseCommand = normalizeCommand(command);
+  const shellControl = shellControlPolicy(baseCommand);
+  const normalized = shellControl ? baseCommand : unwrapCommand(baseCommand);
   const blockedCommand = renderCommand(normalized);
-  const destructive = destructivePolicy(normalized);
+  const destructive = shellControl ?? destructivePolicy(normalized);
   if (destructive || lifecycleCommand(normalized)) {
     return deny(
       blockedCommand,
@@ -3323,14 +3332,17 @@ function protectedPathPolicy(command, protectedPaths) {
 }
 function matchesHookAllowlist(command) {
   const args = stripGitGlobalOptions(command.args);
+  if (command.file === "rg" && matchesRipgrepAllowlist(command.args) || isApplyPatchCommand(command)) {
+    return true;
+  }
   if (command.file === "git") {
-    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "rev-parse" || args[0] === "diff" || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && args[1] === "-u";
+    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "rev-parse" || args[0] === "diff" || ["log", "show"].includes(args[0] ?? "") || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && args[1] === "-u";
   }
   if (command.file === "gh") {
-    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "pr" && ["list", "view"].includes(command.args[1] ?? "") || command.args[0] === "api" && command.args[1] === "graphql";
+    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "api" && command.args[1] === "graphql";
   }
   if (command.file === "pnpm") {
-    return command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "build:mcp" || command.args[0] === "agent-loop" && ["status", "doctor", "logs"].includes(command.args[1] ?? "");
+    return command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "build:hooks" || command.args[0] === "build:mcp" || command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1));
   }
   if (command.file === "npx") {
     return command.args[0] === "gitnexus" && ["--version", "status", "analyze", "detect_changes", "impact"].includes(command.args[1] ?? "");
@@ -3339,6 +3351,53 @@ function matchesHookAllowlist(command) {
     return command.args[0] === "--version";
   }
   return false;
+}
+function matchesRipgrepAllowlist(args) {
+  return !args.some((arg) => arg === "--pre" || arg.startsWith("--pre="));
+}
+function matchesGitGrepAllowlist(args) {
+  return !args.some(
+    (arg) => arg === "-O" || arg.startsWith("-O") || arg === "--open-files-in-pager" || arg.startsWith("--open-files-in-pager=")
+  );
+}
+function isApplyPatchCommand(command) {
+  return command.file === "apply_patch" || command.raw?.startsWith("*** Begin Patch") === true;
+}
+function matchesAgentLoopAllowlist(args) {
+  if (["status", "doctor", "logs", "observe", "timeline", "workers"].includes(args[0] ?? "")) {
+    return true;
+  }
+  if (args[0] === "local") {
+    return args[1] === "doctor";
+  }
+  if (args[0] === "hooks") {
+    return ["doctor", "list"].includes(args[1] ?? "");
+  }
+  if (args[0] === "delivery") {
+    return ["bind", "stage"].includes(args[1] ?? "");
+  }
+  if (args[0] === "evidence") {
+    return args[1] === "append";
+  }
+  return false;
+}
+function shellControlPolicy(command) {
+  if (isApplyPatchCommand(command)) {
+    return void 0;
+  }
+  if (command.raw && hasShellControlOperator(command.raw)) {
+    return "shell_control_operator_forbidden";
+  }
+  if (command.file === "env") {
+    const index = command.args.findIndex((arg) => !arg.includes("="));
+    if (index >= 0) {
+      return shellControlPolicy({ file: basename(command.args[index] ?? ""), args: command.args.slice(index + 1) });
+    }
+  }
+  if ((command.file === "sh" || command.file === "bash") && command.args[0] === "-c" && command.args[1] && hasShellControlOperator(command.args[1])) {
+    return "shell_control_operator_forbidden";
+  }
+  return void 0;
 }
 function deny(blockedCommand, matchedPolicy, gate, nextAction) {
   return {
@@ -3380,6 +3439,9 @@ function tokenizeCommand(command) {
   const parts = command.match(/"[^"]*"|'[^']*'|\S+/g)?.map((part) => part.replace(/^["']|["']$/g, "")) ?? [];
   const [file = "", ...args] = parts;
   return { file: basename(file), args, raw: command };
+}
+function hasShellControlOperator(value) {
+  return /&&|\|\||[;|<>\n\r]/.test(value);
 }
 function stripGitGlobalOptions(args) {
   const result = [...args];
