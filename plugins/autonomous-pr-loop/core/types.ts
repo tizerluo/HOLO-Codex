@@ -474,6 +474,8 @@ export interface AgentLoopStorage {
   listRunChecks(runId: string): AgentLoopRunCheck[];
   /** Return the latest run by update time, if any exists. */
   getCurrentRun(): AgentLoopRun | undefined;
+  /** Fetch a run by stable id. */
+  getRun(runId: string): AgentLoopRun | undefined;
   /** List persisted runs newest-first. */
   listRuns(limit?: number): AgentLoopRun[];
   /** Run a group of read queries against one consistent SQLite snapshot. */

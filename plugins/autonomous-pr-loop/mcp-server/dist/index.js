@@ -1797,6 +1797,9 @@ var SqliteAgentLoopStorage = class {
         );
       }
       const run = this.getRun(runId);
+      if (!run) {
+        throw new AgentLoopError("storage_error", `Run not found: ${runId}`);
+      }
       this.db.prepare(
         `insert into states (run_id, status, state, version, payload_json, created_at)
            values (?, ?, ?, ?, null, ?)`
@@ -2570,10 +2573,7 @@ var SqliteAgentLoopStorage = class {
          from runs
          where id = ?`
     ).get(runId);
-    if (!row) {
-      throw new AgentLoopError("storage_error", `Run not found: ${runId}`);
-    }
-    return fromRunRow(row);
+    return row ? fromRunRow(row) : void 0;
   }
   getActiveRun() {
     const row = this.db.prepare(
