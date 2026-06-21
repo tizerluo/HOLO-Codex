@@ -147,10 +147,8 @@ export function toCodexHookResponse(decision: HookPolicyDecision): Record<string
     return { continue: true };
   }
   return {
-    decision: "deny",
-    permissionDecision: "deny",
-    continue: false,
-    stopReason: decision.reason,
+    decision: "block",
+    reason: decision.reason,
     systemMessage: formatHookMessage(decision)
   };
 }
@@ -321,6 +319,7 @@ function matchesHookAllowlist(command: HookCommand): boolean {
   if (command.file === "pnpm") {
     return command.args[0] === "test" ||
       command.args[0] === "lint" ||
+      command.args[0] === "build:mcp" ||
       command.args[0] === "agent-loop" && ["status", "doctor", "logs"].includes(command.args[1] ?? "");
   }
   if (command.file === "npx") {

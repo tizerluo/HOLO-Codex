@@ -60,7 +60,8 @@
   "scripts": {
     "agent-loop": "tsx plugins/autonomous-pr-loop/scripts/agent-loop.ts",
     "build:hooks": "esbuild plugins/autonomous-pr-loop/hooks/pre-tool-use.ts plugins/autonomous-pr-loop/hooks/post-tool-use.ts plugins/autonomous-pr-loop/hooks/user-prompt-submit.ts plugins/autonomous-pr-loop/hooks/stop.ts plugins/autonomous-pr-loop/hooks/session-start.ts plugins/autonomous-pr-loop/hooks/pre-compact.ts plugins/autonomous-pr-loop/hooks/post-compact.ts plugins/autonomous-pr-loop/hooks/permission-request.ts --bundle --platform=node --format=esm --outdir=plugins/autonomous-pr-loop/hooks/dist",
-    "prepack": "pnpm build:hooks",
+    "build:mcp": "esbuild plugins/autonomous-pr-loop/mcp-server/src/index.ts --bundle --platform=node --format=esm --outfile=plugins/autonomous-pr-loop/mcp-server/dist/index.js",
+    "prepack": "pnpm build:hooks && pnpm build:mcp",
     "test": "vitest run",
     "lint": "tsc --noEmit"
   },

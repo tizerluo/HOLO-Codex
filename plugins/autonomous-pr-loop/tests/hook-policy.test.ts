@@ -1,13 +1,43 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evaluateHookPolicy, evaluatePreToolUseHook } from "../core/hook-policy.js";
+import { evaluateHookPolicy, evaluatePreToolUseHook, toCodexHookResponse } from "../core/hook-policy.js";
 import { statePath } from "../core/config.js";
 import { SqliteAgentLoopStorage } from "../core/storage.js";
 import { cleanupTempRepos, tempRepo } from "./helpers.js";
 
 describe("hook policy", () => {
   afterEach(() => cleanupTempRepos());
+
+  it("serializes PreToolUse denies using the cross-version block contract", () => {
+    const response = toCodexHookResponse({
+      allow: false,
+      matchedPolicy: "policy_violation",
+      gate: "policy_violation",
+      blockedCommand: "git reset --hard",
+      nextAction: "Stop the destructive command.",
+      reason: "Blocked destructive command."
+    });
+
+    expect(response).toMatchObject({
+      decision: "block",
+      reason: "Blocked destructive command.",
+      systemMessage: expect.stringContaining("git reset --hard")
+    });
+    expect(response).not.toHaveProperty("permissionDecision");
+    expect(response).not.toHaveProperty("continue");
+    expect(response).not.toHaveProperty("stopReason");
+    expect(response).not.toHaveProperty("hookSpecificOutput");
+  });
+
+  it("allows the MCP build command used by plugin packaging", () => {
+    const decision = evaluateHookPolicy({
+      repoRoot: "/repo",
+      command: { file: "pnpm", args: ["build:mcp"] }
+    });
+
+    expect(decision.allow).toBe(true);
+  });
 
   it("blocks git reset --hard with global -C variants", () => {
     for (const command of [

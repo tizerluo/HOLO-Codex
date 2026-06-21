@@ -2,11 +2,9 @@
   "mcpServers": {
     "autonomous-pr-loop": {
       "cwd": ".",
-      "command": "pnpm",
+      "command": "node",
       "args": [
-        "exec",
-        "tsx",
-        "./mcp-server/src/index.ts"
+        "./mcp-server/dist/index.js"
       ]
     }
   }

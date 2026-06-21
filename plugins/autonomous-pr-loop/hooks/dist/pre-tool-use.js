@@ -3180,10 +3180,8 @@ function toCodexHookResponse(decision2) {
     return { continue: true };
   }
   return {
-    decision: "deny",
-    permissionDecision: "deny",
-    continue: false,
-    stopReason: decision2.reason,
+    decision: "block",
+    reason: decision2.reason,
     systemMessage: formatHookMessage(decision2)
   };
 }
@@ -3332,7 +3330,7 @@ function matchesHookAllowlist(command) {
     return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "pr" && ["list", "view"].includes(command.args[1] ?? "") || command.args[0] === "api" && command.args[1] === "graphql";
   }
   if (command.file === "pnpm") {
-    return command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "agent-loop" && ["status", "doctor", "logs"].includes(command.args[1] ?? "");
+    return command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "build:mcp" || command.args[0] === "agent-loop" && ["status", "doctor", "logs"].includes(command.args[1] ?? "");
   }
   if (command.file === "npx") {
     return command.args[0] === "gitnexus" && ["--version", "status", "analyze", "detect_changes", "impact"].includes(command.args[1] ?? "");
