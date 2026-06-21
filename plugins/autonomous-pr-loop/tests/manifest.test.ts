@@ -135,6 +135,7 @@ describe("plugin metadata", () => {
       "plugins/autonomous-pr-loop/schemas/config.schema.json",
       "plugins/autonomous-pr-loop/.codex-plugin/plugin.json",
       "plugins/autonomous-pr-loop/mcp-server/src/index.ts",
+      "plugins/autonomous-pr-loop/mcp-server/dist/index.js",
       "plugins/autonomous-pr-loop/skills/autonomous-pr-loop/SKILL.md",
       "docs/install.md",
       "assets/brand/holo-codex-plugin-card.png"
@@ -149,6 +150,20 @@ describe("plugin metadata", () => {
       expect(path).not.toBe("vitest.config.ts");
       expect(path).not.toMatch(/^\.github\//);
     }
+  });
+
+  it("plugin MCP config starts the bundled Node runtime", () => {
+    const mcp = readJson("plugins/autonomous-pr-loop/.mcp.json");
+
+    expect(mcp).toMatchObject({
+      mcpServers: {
+        "autonomous-pr-loop": {
+          cwd: ".",
+          command: "node",
+          args: ["./mcp-server/dist/index.js"]
+        }
+      }
+    });
   });
 
   it("committed hook dist matches the current hook sources", () => {
@@ -180,6 +195,28 @@ describe("plugin metadata", () => {
         expect(readFileSync(resolve(repoRoot, "plugins/autonomous-pr-loop/hooks/dist", fileName), "utf8"))
           .toBe(readFileSync(join(outdir, fileName), "utf8"));
       }
+    } finally {
+      rmSync(outdir, { recursive: true, force: true });
+    }
+  });
+
+  it("committed MCP dist matches the current MCP source", () => {
+    const outdir = mkdtempSync(join(tmpdir(), "agent-loop-mcp-dist-"));
+    const outfile = join(outdir, "index.js");
+
+    try {
+      execFileSync("pnpm", [
+        "exec",
+        "esbuild",
+        "plugins/autonomous-pr-loop/mcp-server/src/index.ts",
+        "--bundle",
+        "--platform=node",
+        "--format=esm",
+        `--outfile=${outfile}`
+      ], { cwd: repoRoot, stdio: "ignore" });
+
+      expect(readFileSync(resolve(repoRoot, "plugins/autonomous-pr-loop/mcp-server/dist/index.js"), "utf8"))
+        .toBe(readFileSync(outfile, "utf8"));
     } finally {
       rmSync(outdir, { recursive: true, force: true });
     }

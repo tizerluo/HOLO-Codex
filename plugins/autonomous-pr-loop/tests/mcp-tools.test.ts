@@ -1,5 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { writeArtifact } from "../core/artifacts.js";
@@ -11,6 +14,29 @@ import { cleanupTempRepos, tempRepo } from "./helpers.js";
 
 describe("mcp tools", () => {
   afterEach(() => cleanupTempRepos());
+
+  it("serves initialize and tools/list before resolving a target repo", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "agent-loop-mcp-non-git-"));
+    try {
+      const output = execFileSync(join(import.meta.dirname, "../../../node_modules/.bin/tsx"), [
+        join(import.meta.dirname, "../mcp-server/src/index.ts")
+      ], {
+        cwd,
+        input: [
+          JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+          JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+          ""
+        ].join("\n"),
+        encoding: "utf8"
+      });
+      const lines = output.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(lines[0]).toMatchObject({ id: 1, result: { serverInfo: { name: "autonomous-pr-loop" } } });
+      expect(lines[1]).toMatchObject({ id: 2, result: { tools: expect.any(Array) } });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   it("exposes the PR E tool set and returns current status", async () => {
     const repoRoot = tempRepo();

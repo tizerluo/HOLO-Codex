@@ -9,7 +9,6 @@ interface JsonRpcRequest {
   params?: unknown;
 }
 
-const repoRoot = resolveRepoRoot(process.env.AGENT_LOOP_REPO_ROOT ?? process.cwd());
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 let initialized = false;
 
@@ -55,7 +54,7 @@ async function handleLine(line: string): Promise<void> {
       const params = isRecord(request.params) ? request.params : {};
       const name = typeof params.name === "string" ? params.name : "";
       const args = isRecord(params.arguments) ? params.arguments : {};
-      const result = await callMcpTool(name, args, repoRoot);
+      const result = await callMcpTool(name, args, resolveMcpRepoRoot());
       respond(request.id, {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         structuredContent: result
@@ -80,6 +79,10 @@ function respond(id: JsonRpcRequest["id"], result?: unknown, error?: unknown): v
 
 function errorPayload(code: number, message: string): { code: number; message: string } {
   return { code, message };
+}
+
+function resolveMcpRepoRoot(): string {
+  return resolveRepoRoot(process.env.AGENT_LOOP_REPO_ROOT ?? process.cwd());
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

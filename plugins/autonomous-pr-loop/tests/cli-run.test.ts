@@ -1603,10 +1603,11 @@ exit 0
       env: { ...process.env, AGENT_LOOP_REPO_ROOT: repoRoot }
     });
     expect(JSON.parse(malformed)).toMatchObject({
-      decision: "deny",
-      permissionDecision: "deny",
-      continue: false
+      decision: "block",
+      reason: "PreToolUse payload was not valid JSON."
     });
+    expect(JSON.parse(malformed)).not.toHaveProperty("permissionDecision");
+    expect(JSON.parse(malformed)).not.toHaveProperty("stopReason");
   });
 
   it("approve-gate requires a note and records approval", async () => {
