@@ -7,6 +7,7 @@ import { redactRemote } from "./command.js";
 import { configPath, loadConfig, statePath, withConfigDefaults } from "./config.js";
 import { McpController, type McpResult } from "./mcp-controller.js";
 import { startDashboardServer } from "./dashboard-server.js";
+import { runDashboardSmoke, type DashboardSmokeReport } from "./dashboard-smoke.js";
 import { runDoctor } from "./doctor.js";
 import { AgentLoopError, isGateCode, toErrorPayload, type AgentLoopErrorCode } from "./errors.js";
 import { recoverBlockedRun } from "./gate-recovery.js";
@@ -223,7 +224,7 @@ function commandHelpUsage(command: string): string | undefined {
     local: "agent-loop local install|rollback|doctor|snapshots [--repo /path/to/repo] [--snapshot PATH] [--json]",
     "approve-gate": "agent-loop approve-gate <gate-id> --note \"...\" [--next-state STATE] [--json]",
     "maintainer-override": "agent-loop maintainer-override approve --scope publish|merge --reason \"...\" [--ttl-minutes N] [--run RUN_ID] [--json]",
-    dashboard: "agent-loop dashboard [--host 127.0.0.1] [--port 0] [--json]",
+    dashboard: "agent-loop dashboard [smoke] [--host 127.0.0.1] [--port 0] [--json]",
     evidence: "agent-loop evidence append --stage STAGE --summary \"...\" [--run RUN_ID] [--substage ID] [--actor ACTOR] [--status STATUS] [--source SOURCE] [--ref REF] [--artifact ID] [--json]",
     delivery: "agent-loop delivery bind|stage [options] [--json]"
   };
@@ -1007,11 +1008,18 @@ async function dashboard(repoRoot: string, args: string[], json: boolean, locale
     const locale = helpLocale(localeOverride);
     return ok(json, {
       ok: true,
-      usage: "agent-loop dashboard [--host 127.0.0.1] [--port 0] [--json]"
+      usage: "agent-loop dashboard [smoke] [--host 127.0.0.1] [--port 0] [--json]"
     }, [
       "Usage: agent-loop dashboard [--host 127.0.0.1] [--port 0]",
+      "Usage: agent-loop dashboard smoke [--json]",
       cliText(locale, "dashboardHelp")
     ]);
+  }
+  if (args[1] === "smoke") {
+    return dashboardSmoke(repoRoot, args.slice(2), json);
+  }
+  if (args[1] && !args[1].startsWith("--")) {
+    throw new AgentLoopError("unknown_command", `Unknown dashboard command: ${args[1]}`);
   }
   const repoLocale = localeForRepo(repoRoot, localeOverride);
   const host = optionArg(args, "--host");
@@ -1038,6 +1046,62 @@ async function dashboard(repoRoot: string, args: string[], json: boolean, locale
     exitCode: 0,
     stdout,
     stderr: `dashboard token: ${server.token}\n# do not log or redirect this token\n`
+  };
+}
+
+async function dashboardSmoke(repoRoot: string, args: string[], json: boolean): Promise<CliResult> {
+  const smoke = await runDashboardSmoke(repoRoot, dashboardSmokeOptions(args));
+  const stdout = json ? `${JSON.stringify(smoke, null, 2)}\n` : dashboardSmokeText(smoke);
+  return {
+    exitCode: smoke.ok ? 0 : 1,
+    stdout,
+    stderr: ""
+  };
+}
+
+function dashboardSmokeText(smoke: DashboardSmokeReport): string {
+  return [
+    `dashboard smoke: ${smoke.status}`,
+    `url: ${smoke.dashboard.url}`,
+    ...smoke.checks.map((check) => `${check.status}: ${check.label} - ${check.evidence}`)
+  ].join("\n") + "\n";
+}
+
+function dashboardSmokeOptions(args: string[]): { host?: string; port?: number } {
+  let host: string | undefined;
+  let port: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--host") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new AgentLoopError("invalid_config", "dashboard smoke --host requires a value.");
+      }
+      if (value !== "127.0.0.1" && value !== "localhost") {
+        throw new AgentLoopError("invalid_config", "dashboard smoke --host must be 127.0.0.1 or localhost.");
+      }
+      host = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--port") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new AgentLoopError("invalid_config", "dashboard smoke --port requires a value.");
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65_535) {
+        throw new AgentLoopError("invalid_config", "dashboard smoke --port must be an integer from 0 to 65535.");
+      }
+      port = parsed;
+      index += 1;
+      continue;
+    }
+    throw new AgentLoopError("invalid_config", `Unsupported dashboard smoke option: ${arg ?? ""}`);
+  }
+  return {
+    ...(host ? { host } : {}),
+    ...(port !== undefined ? { port } : {})
   };
 }
 

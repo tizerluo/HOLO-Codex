@@ -131,6 +131,74 @@ describe("PR B CLI", () => {
     expect(statusPayload.storagePath).toBe(statePath(canonicalTargetRoot));
   });
 
+  it("runs dashboard smoke as structured release-readiness output", async () => {
+    const repoRoot = tempRepo("agent-loop-dashboard-smoke-");
+    await runAgentLoopCli(["init", "--json"], repoRoot);
+
+    const previousToken = process.env.AGENT_LOOP_MCP_TOKEN;
+    let result: Awaited<ReturnType<typeof runAgentLoopCli>>;
+    try {
+      process.env.AGENT_LOOP_MCP_TOKEN = "dashboard-smoke-secret-value";
+      result = await runAgentLoopCli(["dashboard", "smoke", "--host", "127.0.0.1", "--port", "0", "--json"], repoRoot);
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.AGENT_LOOP_MCP_TOKEN;
+      } else {
+        process.env.AGENT_LOOP_MCP_TOKEN = previousToken;
+      }
+    }
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      status: string;
+      dashboard: { url: string; loopbackOnly: boolean };
+      checks: Array<{ id: string; status: string; evidence: string }>;
+    };
+
+    expect(result.exitCode).toBe(0);
+    expect(payload.ok).toBe(true);
+    expect(payload.status).toBe("warn");
+    expect(payload.dashboard.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
+    expect(payload.dashboard.loopbackOnly).toBe(true);
+    expect(payload.checks.find((check) => check.id === "workflow_status_consistency")?.status).toBe("passed");
+    expect(payload.checks.find((check) => check.id === "loading_settled")?.status).toBe("passed");
+    expect(payload.checks.find((check) => check.id === "live_ui_validation")?.status).toBe("incomplete");
+    expect(payload.checks.find((check) => check.id === "responsive_viewports")?.status).toBe("incomplete");
+    expect(JSON.stringify(payload)).not.toContain("Dashboard token");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("dashboard-smoke-secret-value");
+  });
+
+  it("reports dashboard smoke API failures as structured checks", async () => {
+    const repoRoot = tempRepo("agent-loop-dashboard-smoke-uninit-");
+
+    const result = await runAgentLoopCli(["dashboard", "smoke", "--json"], repoRoot);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      status: string;
+      checks: Array<{ id: string; status: string; evidence: string }>;
+    };
+
+    expect(result.exitCode).toBe(1);
+    expect(payload.ok).toBe(false);
+    expect(payload.status).toBe("fail");
+    expect(payload.checks.find((check) => check.id === "dashboard_meta")).toMatchObject({
+      status: "failed"
+    });
+    expect(JSON.stringify(payload)).not.toContain("Dashboard token");
+  });
+
+  it("rejects unknown dashboard subcommands and unsupported smoke options", async () => {
+    const repoRoot = tempRepo("agent-loop-dashboard-smoke-options-");
+    await runAgentLoopCli(["init", "--json"], repoRoot);
+
+    const typo = await runAgentLoopCli(["dashboard", "typo", "--json"], repoRoot);
+    const unsupported = await runAgentLoopCli(["dashboard", "smoke", "--bad", "--json"], repoRoot);
+    const unsupportedHost = await runAgentLoopCli(["dashboard", "smoke", "--host", "::1", "--json"], repoRoot);
+
+    expect(JSON.parse(typo.stdout).error.code).toBe("unknown_command");
+    expect(JSON.parse(unsupported.stdout).error.code).toBe("invalid_config");
+    expect(JSON.parse(unsupportedHost.stdout).error.code).toBe("invalid_config");
+  });
+
   it("keeps two --repo targets isolated", async () => {
     const first = tempRepo("agent-loop-first-");
     const second = tempRepo("agent-loop-second-");
