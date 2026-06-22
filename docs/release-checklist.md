@@ -1,6 +1,6 @@
 # HOLO-Codex npm Release Checklist
 
-Use this checklist for npm releases such as `v0.1.1`. Replace `VERSION` with the package version being released.
+Use this checklist for npm releases such as `v0.1.2`. Replace `VERSION` with the package version being released.
 
 The public source release remains available at `https://github.com/tizerluo/HOLO-Codex`. The npm package is `holo-codex` and installs the stable `agent-loop` CLI. Compatibility identifiers remain unchanged: `agent-loop`, `.agent-loop/`, `autonomous-pr-loop`, and `plugins/autonomous-pr-loop/`.
 
