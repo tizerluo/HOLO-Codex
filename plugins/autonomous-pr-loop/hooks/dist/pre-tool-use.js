@@ -3583,6 +3583,9 @@ function isCodexBranch(value) {
   return /^codex\/[A-Za-z0-9._/-]+$/.test(value) && !value.includes("..") && !value.endsWith("/");
 }
 function matchesGhRepoScope(args, repoId) {
+  if (args.some((arg) => arg === "--hostname" || arg.startsWith("--hostname="))) {
+    return false;
+  }
   const repoValues = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
@@ -3674,7 +3677,7 @@ function isRepoOwnedTsxEntrypoint(value) {
   return !normalized.split("/").includes("..") && (normalized.startsWith("plugins/autonomous-pr-loop/scripts/") || normalized.startsWith("plugins/autonomous-pr-loop/mcp-server/src/"));
 }
 function matchesPnpmPackAllowlist(args) {
-  return args.includes("--dry-run") && args.includes("--ignore-scripts") && !args.some((arg) => arg === "--pack-destination" || arg.startsWith("--pack-destination="));
+  return args.includes("--dry-run") && args.includes("--ignore-scripts") && matchesPackageViewAllowlist(args) && !args.some((arg) => arg === "--pack-destination" || arg.startsWith("--pack-destination="));
 }
 function matchesNpmAllowlist(args) {
   if (args[0] === "whoami" && args.length === 1) {
@@ -3687,7 +3690,7 @@ function matchesNpmAllowlist(args) {
     return matchesPackageViewAllowlist(args.slice(1));
   }
   if (args[0] === "pack") {
-    return args.includes("--ignore-scripts") && args.includes("--dry-run") && args.includes("--json");
+    return args.includes("--ignore-scripts") && args.includes("--dry-run") && args.includes("--json") && matchesPackageViewAllowlist(args.slice(1));
   }
   if (args[0] === "install") {
     const prefix = singleFlagValue(args, "--prefix");
@@ -3695,7 +3698,7 @@ function matchesNpmAllowlist(args) {
       const previous = args[index] ?? "";
       return !arg.startsWith("-") && previous !== "--prefix";
     });
-    return Boolean(prefix) && isSafeTempPath(prefix ?? "") && specs.length >= 1 && specs.every(isSafeNpmInstallSpec) && args.includes("--ignore-scripts") && !args.some((arg) => ["--global", "-g"].includes(arg));
+    return Boolean(prefix) && isSafeTempPath(prefix ?? "") && specs.length >= 1 && specs.every(isSafeNpmInstallSpec) && matchesPackageViewAllowlist(args.slice(1)) && args.includes("--ignore-scripts") && !args.some((arg) => ["--global", "-g"].includes(arg));
   }
   return false;
 }

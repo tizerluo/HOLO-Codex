@@ -649,6 +649,9 @@ function isCodexBranch(value: string): boolean {
 }
 
 function matchesGhRepoScope(args: string[], repoId?: string): boolean {
+  if (args.some((arg) => arg === "--hostname" || arg.startsWith("--hostname="))) {
+    return false;
+  }
   const repoValues: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
@@ -755,6 +758,7 @@ function isRepoOwnedTsxEntrypoint(value: string): boolean {
 function matchesPnpmPackAllowlist(args: string[]): boolean {
   return args.includes("--dry-run") &&
     args.includes("--ignore-scripts") &&
+    matchesPackageViewAllowlist(args) &&
     !args.some((arg) => arg === "--pack-destination" || arg.startsWith("--pack-destination="));
 }
 
@@ -769,7 +773,10 @@ function matchesNpmAllowlist(args: string[]): boolean {
     return matchesPackageViewAllowlist(args.slice(1));
   }
   if (args[0] === "pack") {
-    return args.includes("--ignore-scripts") && args.includes("--dry-run") && args.includes("--json");
+    return args.includes("--ignore-scripts") &&
+      args.includes("--dry-run") &&
+      args.includes("--json") &&
+      matchesPackageViewAllowlist(args.slice(1));
   }
   if (args[0] === "install") {
     const prefix = singleFlagValue(args, "--prefix");
@@ -781,6 +788,7 @@ function matchesNpmAllowlist(args: string[]): boolean {
       isSafeTempPath(prefix ?? "") &&
       specs.length >= 1 &&
       specs.every(isSafeNpmInstallSpec) &&
+      matchesPackageViewAllowlist(args.slice(1)) &&
       args.includes("--ignore-scripts") &&
       !args.some((arg) => ["--global", "-g"].includes(arg));
   }
