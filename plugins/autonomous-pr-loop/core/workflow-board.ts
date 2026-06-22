@@ -40,6 +40,9 @@ export type WorkflowReviewRequirement = "required" | "optional" | "not_required"
 export type WorkflowReviewProgress = "requested" | "started" | "in_progress" | "incomplete" | "complete" | "skipped" | "unknown";
 export type WorkflowReviewResult = "pass" | "block" | "warn" | "unknown";
 export type WorkflowReviewSeveritySummary = "none" | "p3_only" | "p2_or_higher" | "unknown";
+export type WorkflowReviewSeverityId = "p0" | "p1" | "p2" | "p3" | "follow_up";
+export type WorkflowReviewSeverityStatus = "none" | "present" | "unknown";
+export type WorkflowReviewResolutionStatus = "fixed" | "routed" | "pending" | "not_applicable" | "unknown";
 export type WorkflowActor =
   | "codex"
   | "worker"
@@ -162,10 +165,17 @@ export interface WorkflowBoardWorkItem {
 export interface WorkflowReviewReportRow {
   id: string;
   agent: string;
+  reviewer?: WorkflowReviewReviewer | undefined;
+  role: string;
   model?: string | undefined;
+  backend?: string | undefined;
   status: "pass" | "block" | "warn" | "pending" | "skipped" | "unknown";
   prComment: "posted" | "missing" | "not_required" | "unknown";
   severitySummary: string;
+  severityGroups: WorkflowReviewSeverityGroup[];
+  resolutionStatus: WorkflowReviewResolutionStatus;
+  resolutionEvidence: string;
+  followUp?: string | undefined;
   requirement?: WorkflowReviewRequirement | undefined;
   progress?: WorkflowReviewProgress | undefined;
   result?: WorkflowReviewResult | undefined;
@@ -175,8 +185,14 @@ export interface WorkflowReviewReportRow {
   conversationId?: string | undefined;
   reason?: string | undefined;
   nextAction?: string | undefined;
-  followUp?: string | undefined;
   evidenceRefIds: string[];
+}
+
+export interface WorkflowReviewSeverityGroup {
+  id: WorkflowReviewSeverityId;
+  label: string;
+  status: WorkflowReviewSeverityStatus;
+  evidence?: string | undefined;
 }
 
 export interface WorkflowCheckRow {
@@ -237,11 +253,20 @@ export interface WorkflowReviewEvidence {
   progress: WorkflowReviewProgress;
   result: WorkflowReviewResult;
   severitySummary: WorkflowReviewSeveritySummary;
+  role?: string | undefined;
   model?: string | undefined;
+  backend?: string | undefined;
   sessionId?: string | undefined;
   conversationId?: string | undefined;
   commentUrl?: string | undefined;
   commentId?: string | undefined;
+  p0?: string | undefined;
+  p1?: string | undefined;
+  p2?: string | undefined;
+  p3?: string | undefined;
+  followUp?: string | undefined;
+  resolutionStatus?: WorkflowReviewResolutionStatus | undefined;
+  resolutionEvidence?: string | undefined;
   reason?: string | undefined;
 }
 
@@ -358,6 +383,14 @@ const REVIEW_REQUIREMENTS: WorkflowReviewRequirement[] = ["required", "optional"
 const REVIEW_PROGRESS: WorkflowReviewProgress[] = ["requested", "started", "in_progress", "incomplete", "complete", "skipped", "unknown"];
 const REVIEW_RESULTS: WorkflowReviewResult[] = ["pass", "block", "warn", "unknown"];
 const REVIEW_SEVERITIES: WorkflowReviewSeveritySummary[] = ["none", "p3_only", "p2_or_higher", "unknown"];
+const REVIEW_RESOLUTIONS: WorkflowReviewResolutionStatus[] = ["fixed", "routed", "pending", "not_applicable", "unknown"];
+const REVIEW_SEVERITY_GROUPS: Array<{ id: WorkflowReviewSeverityId; label: string }> = [
+  { id: "p0", label: "P0" },
+  { id: "p1", label: "P1" },
+  { id: "p2", label: "P2" },
+  { id: "p3", label: "P3" },
+  { id: "follow_up", label: "Follow-up" }
+];
 
 export interface WorkflowBoardInput {
   config: AgentLoopConfig;
@@ -615,6 +648,7 @@ function normalizeReviewEvidence(value: unknown, stageId: WorkflowStageId): Work
   const severitySummary = enumValue(value.severitySummary, REVIEW_SEVERITIES, "severitySummary");
   const commentUrl = optionalRedactedString(value.commentUrl, "commentUrl");
   const commentId = optionalRedactedString(value.commentId, "commentId");
+  const resolutionStatus = value.resolutionStatus === undefined ? undefined : enumValue(value.resolutionStatus, REVIEW_RESOLUTIONS, "resolutionStatus");
   if (commentUrl && !isGitHubIssueCommentUrl(commentUrl)) {
     throw new AgentLoopError("invalid_config", "review evidence commentUrl must be a GitHub PR comment, review, or discussion URL.");
   }
@@ -630,11 +664,20 @@ function normalizeReviewEvidence(value: unknown, stageId: WorkflowStageId): Work
     progress,
     result,
     severitySummary,
+    ...optionalReviewField("role", value.role),
     ...optionalReviewField("model", value.model),
+    ...optionalReviewField("backend", value.backend),
     ...optionalReviewField("sessionId", value.sessionId),
     ...optionalReviewField("conversationId", value.conversationId),
     ...(commentUrl ? { commentUrl } : {}),
     ...(commentId ? { commentId } : {}),
+    ...optionalReviewField("p0", value.p0),
+    ...optionalReviewField("p1", value.p1),
+    ...optionalReviewField("p2", value.p2),
+    ...optionalReviewField("p3", value.p3),
+    ...optionalReviewField("followUp", value.followUp),
+    ...(resolutionStatus ? { resolutionStatus } : {}),
+    ...optionalReviewField("resolutionEvidence", value.resolutionEvidence),
     ...optionalReviewField("reason", value.reason)
   };
 }
@@ -1114,9 +1157,13 @@ function reviewRows(input: WorkflowBoardInput, appended: WorkflowEvidenceRef[]):
   rows.push(...input.reviewComments.map((comment) => ({
     id: comment.id,
     agent: comment.author,
+    role: "GitHub PR comment",
     status: comment.actionable && !comment.isResolved ? "block" as const : "unknown" as const,
     prComment: "posted" as const,
     severitySummary: "no severity evidence",
+    severityGroups: severityGroupsFromSummary("unknown"),
+    resolutionStatus: comment.actionable && !comment.isResolved ? "pending" as const : "unknown" as const,
+    resolutionEvidence: comment.actionable && !comment.isResolved ? "Actionable PR comment is unresolved." : "No structured fix/routing status.",
     nextAction: comment.actionable && !comment.isResolved ? "Classify and fix or reply." : "No action from available evidence.",
     evidenceRefIds: [comment.id]
   })));
@@ -1130,9 +1177,13 @@ function reviewRows(input: WorkflowBoardInput, appended: WorkflowEvidenceRef[]):
     rows.push({
       id: event.id,
       agent: reportAgentLabel(actor, event.message),
+      role: "Legacy review evidence",
       status: status === "skipped" ? "skipped" : status === "blocked" || status === "failed" ? "block" : status === "done" ? "pass" : "unknown",
       prComment: refs.some(isGitHubIssueCommentUrl) ? "posted" : "unknown",
       severitySummary: "no severity evidence",
+      severityGroups: severityGroupsFromSummary("unknown"),
+      resolutionStatus: status === "blocked" || status === "failed" ? "pending" : "unknown",
+      resolutionEvidence: "Legacy evidence has no structured fix/routing status.",
       reason: status === "skipped" ? event.message : undefined,
       nextAction: "Inspect legacy review evidence; structured completion data is unavailable.",
       evidenceRefIds: ref ? [ref.id, ...refs] : [event.id, ...refs]
@@ -1142,9 +1193,14 @@ function reviewRows(input: WorkflowBoardInput, appended: WorkflowEvidenceRef[]):
     rows.push({
       id: "review:claude-unknown",
       agent: "Claude ACP",
+      reviewer: "claude_acp",
+      role: reviewRoleLabel("claude_acp"),
       status: "unknown",
       prComment: "unknown",
       severitySummary: "no requirement source",
+      severityGroups: severityGroupsFromSummary("unknown"),
+      resolutionStatus: "unknown",
+      resolutionEvidence: "No structured review evidence yet.",
       requirement: "unknown",
       progress: "unknown",
       result: "unknown",
@@ -1157,9 +1213,14 @@ function reviewRows(input: WorkflowBoardInput, appended: WorkflowEvidenceRef[]):
     rows.push({
       id: "review:agy-unknown",
       agent: "AGY/Gemini",
+      reviewer: "agy_gemini",
+      role: reviewRoleLabel("agy_gemini"),
       status: "unknown",
       prComment: "unknown",
       severitySummary: "no requirement source",
+      severityGroups: severityGroupsFromSummary("unknown"),
+      resolutionStatus: "unknown",
+      resolutionEvidence: "No structured review evidence yet.",
       requirement: "unknown",
       progress: "unknown",
       result: "unknown",
@@ -1194,10 +1255,17 @@ function reviewRowFromEvidence(event: AgentLoopEvent, review: WorkflowReviewEvid
   return {
     id: event.id,
     agent: reviewAgentLabel(review.reviewer),
+    reviewer: review.reviewer,
+    role: review.role ?? reviewRoleLabel(review.reviewer),
     model: review.model,
+    backend: review.backend ?? review.model,
     status: reviewStatus(review, progress),
     prComment,
     severitySummary: reviewSeverityLabel(review.severitySummary),
+    severityGroups: reviewSeverityGroups(review),
+    resolutionStatus: reviewResolutionStatus(review, progress),
+    resolutionEvidence: reviewResolutionEvidence(review, progress),
+    followUp: review.followUp,
     requirement: review.requirement,
     progress,
     result: review.result,
@@ -1225,6 +1293,7 @@ function effectiveReviewProgress(review: WorkflowReviewEvidence): WorkflowReview
 
 function reviewStatus(review: WorkflowReviewEvidence, progress: WorkflowReviewProgress): WorkflowReviewReportRow["status"] {
   if (progress === "skipped") return "skipped";
+  if (progress === "incomplete" && review.result !== "block") return "pending";
   if (review.result === "block") return "block";
   if (review.result === "warn") return "warn";
   if (review.result === "pass") return "pass";
@@ -1242,6 +1311,64 @@ function reviewNextAction(review: WorkflowReviewEvidence, progress: WorkflowRevi
   return "Attach structured review evidence when available.";
 }
 
+function reviewResolutionStatus(review: WorkflowReviewEvidence, progress: WorkflowReviewProgress): WorkflowReviewResolutionStatus {
+  if (review.resolutionStatus) return review.resolutionStatus;
+  if (review.result === "block" || review.severitySummary === "p2_or_higher") return "pending";
+  if (progress === "incomplete") return "pending";
+  if (review.result === "pass" && (review.severitySummary === "none" || review.severitySummary === "p3_only")) return "not_applicable";
+  return "unknown";
+}
+
+function reviewResolutionEvidence(review: WorkflowReviewEvidence, progress: WorkflowReviewProgress): string {
+  if (review.resolutionEvidence) return review.resolutionEvidence;
+  if (review.reason) return review.reason;
+  if (review.result === "block" || review.severitySummary === "p2_or_higher") return "P0/P1/P2 findings must be fixed or routed before merge.";
+  if (progress === "incomplete") return "Required report or re-review evidence is incomplete.";
+  if (review.result === "pass" && (review.severitySummary === "none" || review.severitySummary === "p3_only")) return "No P0/P1/P2 fix or routing required.";
+  return "No structured fix/routing status.";
+}
+
+function reviewSeverityGroups(review: WorkflowReviewEvidence): WorkflowReviewSeverityGroup[] {
+  const fromSummary = severityGroupsFromSummary(review.severitySummary);
+  const explicit = severityGroupsFromExplicitFields(review);
+  return fromSummary.map((group, index) => explicit[index]?.status === "present" ? explicit[index] : group);
+}
+
+function severityGroupsFromExplicitFields(review: WorkflowReviewEvidence): WorkflowReviewSeverityGroup[] {
+  return [
+    severityGroup("p0", "P0", review.p0),
+    severityGroup("p1", "P1", review.p1),
+    severityGroup("p2", "P2", review.p2),
+    severityGroup("p3", "P3", review.p3),
+    severityGroup("follow_up", "Follow-up", review.followUp)
+  ];
+}
+
+function severityGroupsFromSummary(summary: WorkflowReviewSeveritySummary): WorkflowReviewSeverityGroup[] {
+  if (summary === "none") {
+    return REVIEW_SEVERITY_GROUPS.map((group) => ({ ...group, status: "none" as const }));
+  }
+  if (summary === "p3_only") {
+    return REVIEW_SEVERITY_GROUPS.map((group) => ({
+      ...group,
+      status: group.id === "p3" ? "present" as const : "none" as const,
+      ...(group.id === "p3" ? { evidence: "P3-only findings recorded." } : {})
+    }));
+  }
+  if (summary === "p2_or_higher") {
+    return REVIEW_SEVERITY_GROUPS.map((group) => ({
+      ...group,
+      status: "unknown" as const,
+      ...(["p0", "p1", "p2"].includes(group.id) ? { evidence: "P2 or higher finding recorded; exact severity group not split." } : {})
+    }));
+  }
+  return REVIEW_SEVERITY_GROUPS.map((group) => ({ ...group, status: "unknown" as const }));
+}
+
+function severityGroup(id: WorkflowReviewSeverityId, label: string, evidence: string | undefined): WorkflowReviewSeverityGroup {
+  return evidence ? { id, label, status: "present", evidence } : { id, label, status: "none" };
+}
+
 function reviewAgentLabel(reviewer: WorkflowReviewReviewer): string {
   const labels: Record<WorkflowReviewReviewer, string> = {
     claude_acp: "Claude ACP",
@@ -1251,6 +1378,19 @@ function reviewAgentLabel(reviewer: WorkflowReviewReviewer): string {
     github: "GitHub",
     human: "Human",
     custom: "Custom reviewer"
+  };
+  return labels[reviewer];
+}
+
+function reviewRoleLabel(reviewer: WorkflowReviewReviewer): string {
+  const labels: Record<WorkflowReviewReviewer, string> = {
+    claude_acp: "Code/security review",
+    agy_gemini: "UI/multimodal review",
+    internal_tester: "Internal tester",
+    internal_reviewer: "Internal code review",
+    github: "GitHub review",
+    human: "Human owner review",
+    custom: "Custom review"
   };
   return labels[reviewer];
 }
@@ -1325,7 +1465,7 @@ function mergeReadinessRows(input: WorkflowBoardInput): WorkflowCheckRow[] {
 
 function blockingReviewEvidence(events: AgentLoopEvent[]): { message: string; review: WorkflowReviewEvidence } | undefined {
   for (const { event, review } of latestStructuredReviewEvidence(events).values()) {
-    if (review && (review.result === "block" || review.severitySummary === "p2_or_higher")) {
+    if (review && (review.result === "block" || review.severitySummary === "p2_or_higher") && !reviewFindingsResolved(review)) {
       return { message: event.message, review };
     }
   }
@@ -1338,10 +1478,16 @@ function satisfiedReviewEvidence(events: AgentLoopEvent[]): string | undefined {
   if (required.length === 0) return undefined;
   const allClear = required.every(({ review }) =>
     effectiveReviewProgress(review) === "complete" &&
-    review.result === "pass" &&
-    (review.severitySummary === "none" || review.severitySummary === "p3_only")
+    (
+      reviewFindingsResolved(review) ||
+      (review.result === "pass" && (review.severitySummary === "none" || review.severitySummary === "p3_only"))
+    )
   );
-  return allClear ? "all required structured reviews passed without P0/P1/P2 evidence" : undefined;
+  return allClear ? "all required structured reviews passed or resolved P0/P1/P2 findings" : undefined;
+}
+
+function reviewFindingsResolved(review: WorkflowReviewEvidence): boolean {
+  return review.resolutionStatus === "fixed" || review.resolutionStatus === "routed";
 }
 
 function cleanupRows(input: WorkflowBoardInput): WorkflowCheckRow[] {
@@ -1483,11 +1629,20 @@ function parseStoredReviewEvidence(event: AgentLoopEvent): WorkflowReviewEvidenc
     progress: review.progress,
     result: review.result,
     severitySummary: review.severitySummary,
+    ...optionalStoredReviewString("role", review.role),
     ...optionalStoredReviewString("model", review.model),
+    ...optionalStoredReviewString("backend", review.backend),
     ...optionalStoredReviewString("sessionId", review.sessionId),
     ...optionalStoredReviewString("conversationId", review.conversationId),
     ...(commentUrl && isGitHubIssueCommentUrl(commentUrl) ? { commentUrl } : {}),
     ...optionalStoredReviewString("commentId", review.commentId),
+    ...optionalStoredReviewString("p0", review.p0),
+    ...optionalStoredReviewString("p1", review.p1),
+    ...optionalStoredReviewString("p2", review.p2),
+    ...optionalStoredReviewString("p3", review.p3),
+    ...optionalStoredReviewString("followUp", review.followUp),
+    ...(isWorkflowReviewResolution(review.resolutionStatus) ? { resolutionStatus: review.resolutionStatus } : {}),
+    ...optionalStoredReviewString("resolutionEvidence", review.resolutionEvidence),
     ...optionalStoredReviewString("reason", review.reason)
   };
 }
@@ -1514,6 +1669,10 @@ function isWorkflowReviewResult(value: unknown): value is WorkflowReviewResult {
 
 function isWorkflowReviewSeverity(value: unknown): value is WorkflowReviewSeveritySummary {
   return typeof value === "string" && REVIEW_SEVERITIES.includes(value as WorkflowReviewSeveritySummary);
+}
+
+function isWorkflowReviewResolution(value: unknown): value is WorkflowReviewResolutionStatus {
+  return typeof value === "string" && REVIEW_RESOLUTIONS.includes(value as WorkflowReviewResolutionStatus);
 }
 
 function eventStageGuess(event: AgentLoopEvent): WorkflowStageId {

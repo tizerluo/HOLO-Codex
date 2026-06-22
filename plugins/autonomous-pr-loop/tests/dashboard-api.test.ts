@@ -147,6 +147,12 @@ describe("dashboard API", () => {
           progress: "complete",
           result: "pass",
           severitySummary: "none",
+          role: "Code/security review",
+          backend: "Claude local ACP",
+          p3: "One polish note.",
+          followUp: "Track screenshot CI later.",
+          resolutionStatus: "fixed",
+          resolutionEvidence: "P1/P2 fixed before merge.",
           commentUrl: "https://github.com/6tizer/codex-auto-PR-loop-plusin/pull/1#pullrequestreview-77",
           commentId: "77"
         }
@@ -192,6 +198,12 @@ describe("dashboard API", () => {
       review: {
         reviewer: "claude_acp",
         progress: "complete",
+        role: "Code/security review",
+        backend: "Claude local ACP",
+        p3: "One polish note.",
+        followUp: "Track screenshot CI later.",
+        resolutionStatus: "fixed",
+        resolutionEvidence: "P1/P2 fixed before merge.",
         commentUrl: "https://github.com/6tizer/codex-auto-PR-loop-plusin/pull/1#pullrequestreview-77"
       }
     });
@@ -366,6 +378,13 @@ describe("dashboard API", () => {
       progress: "complete",
       result: "block",
       severitySummary: "p2_or_higher",
+      role: "Internal code review",
+      backend: "GPT 5.5",
+      p2: "State mismatch blocks merge.",
+      p3: "Copy polish.",
+      followUp: "Add automated screenshot CI later.",
+      resolutionStatus: "pending",
+      resolutionEvidence: "P2 still needs a code fix.",
       commentUrl: "https://github.com/6tizer/codex-auto-PR-loop-plusin/pull/1#issuecomment-102"
     });
     appendReviewEvidence(storage, run.id, "Human review skipped.", {
@@ -408,12 +427,17 @@ describe("dashboard API", () => {
       data: {
         reviewReports: Array<{
           agent: string;
+          role: string;
+          backend?: string;
           requirement?: string;
           progress?: string;
           result?: string;
           status?: string;
           prComment: string;
           severitySummary: string;
+          severityGroups: Array<{ id: string; status: string; evidence?: string }>;
+          resolutionStatus: string;
+          resolutionEvidence: string;
           commentUrl?: string;
         }>;
         mergeReadinessChecks: Array<{ id: string; status: string; evidence: string }>;
@@ -433,10 +457,21 @@ describe("dashboard API", () => {
     expect(agy).toMatchObject({ requirement: "required", progress: "complete", result: "pass", prComment: "posted", severitySummary: "none" });
     expect(agy?.commentUrl).toContain("#issuecomment-101");
     expect(internal).toMatchObject({ requirement: "required", progress: "complete", result: "block", prComment: "posted", severitySummary: "P2 or higher" });
+    expect(internal).toMatchObject({
+      role: "Internal code review",
+      backend: "GPT 5.5",
+      resolutionStatus: "pending",
+      resolutionEvidence: "P2 still needs a code fix."
+    });
+    expect(internal?.severityGroups.find((group) => group.id === "p2")).toMatchObject({ status: "present", evidence: "State mismatch blocks merge." });
+    expect(internal?.severityGroups.find((group) => group.id === "p3")).toMatchObject({ status: "present", evidence: "Copy polish." });
+    expect(internal?.severityGroups.find((group) => group.id === "follow_up")).toMatchObject({ status: "present", evidence: "Add automated screenshot CI later." });
     expect(human).toMatchObject({ requirement: "not_required", progress: "complete", prComment: "not_required" });
     expect(custom).toMatchObject({ requirement: "not_required", progress: "skipped", prComment: "not_required" });
     expect(github).toMatchObject({ requirement: "required", progress: "incomplete", prComment: "missing" });
+    expect(github).toMatchObject({ resolutionStatus: "pending", resolutionEvidence: "Required report or re-review evidence is incomplete." });
     expect(tester).toMatchObject({ requirement: "optional", progress: "complete", result: "warn", status: "warn", prComment: "posted", severitySummary: "P3 only" });
+    expect(tester?.severityGroups.find((group) => group.id === "p3")).toMatchObject({ status: "present" });
     expect(legacy).toMatchObject({ severitySummary: "no severity evidence", status: "pass" });
     expect(board.data.mergeReadinessChecks.find((row) => row.id === "findings_gate")).toMatchObject({
       status: "blocked",
@@ -482,7 +517,94 @@ describe("dashboard API", () => {
     });
     expect(board.data.mergeReadinessChecks.find((row) => row.id === "findings_gate")).toMatchObject({
       status: "passed",
-      evidence: "all required structured reviews passed without P0/P1/P2 evidence"
+      evidence: "all required structured reviews passed or resolved P0/P1/P2 findings"
+    });
+  });
+
+  it("treats fixed or routed review findings as merge-ready while preserving aggregate severity", async () => {
+    const repoRoot = boundWorkflowRepo("WAIT_REVIEW_OR_CI");
+    const storage = new SqliteAgentLoopStorage(join(repoRoot, ".agent-loop", "state.sqlite"));
+    const run = storage.getCurrentRun();
+    if (!run) throw new Error("missing bound run");
+    appendReviewEvidence(storage, run.id, "Claude routed aggregate P2 findings.", {
+      reviewer: "claude_acp",
+      requirement: "required",
+      progress: "complete",
+      result: "block",
+      severitySummary: "p2_or_higher",
+      followUp: "Open CI screenshot automation later.",
+      resolutionStatus: "routed",
+      resolutionEvidence: "Routed to issue #18.",
+      commentUrl: "https://github.com/6tizer/codex-auto-PR-loop-plusin/pull/1#issuecomment-301"
+    });
+    appendReviewEvidence(storage, run.id, "AGY passed without blockers.", {
+      reviewer: "agy_gemini",
+      requirement: "required",
+      progress: "complete",
+      result: "pass",
+      severitySummary: "none",
+      commentUrl: "https://github.com/6tizer/codex-auto-PR-loop-plusin/pull/1#issuecomment-302"
+    });
+    storage.close();
+    const server = await startDashboardServer({ repoRoot, token: "test-token", serveUi: false });
+    handles.push(server);
+
+    const board = await (await fetch(`${base(server)}/api/workflow-board`)).json() as {
+      data: {
+        reviewReports: Array<{
+          agent: string;
+          status: string;
+          progress?: string;
+          severityGroups: Array<{ id: string; status: string; evidence?: string }>;
+          followUp?: string;
+          resolutionStatus: string;
+          resolutionEvidence: string;
+        }>;
+        mergeReadinessChecks: Array<{ id: string; status: string; evidence: string }>;
+      };
+    };
+
+    const claude = board.data.reviewReports.find((row) => row.agent === "Claude ACP");
+    expect(claude).toMatchObject({
+      status: "block",
+      resolutionStatus: "routed",
+      resolutionEvidence: "Routed to issue #18.",
+      followUp: "Open CI screenshot automation later."
+    });
+    expect(claude?.severityGroups.find((group) => group.id === "p0")).toMatchObject({ status: "unknown" });
+    expect(claude?.severityGroups.find((group) => group.id === "p1")).toMatchObject({ status: "unknown" });
+    expect(claude?.severityGroups.find((group) => group.id === "p2")).toMatchObject({ status: "unknown", evidence: "P2 or higher finding recorded; exact severity group not split." });
+    expect(claude?.severityGroups.find((group) => group.id === "follow_up")).toMatchObject({ status: "present", evidence: "Open CI screenshot automation later." });
+    expect(board.data.mergeReadinessChecks.find((row) => row.id === "findings_gate")).toMatchObject({
+      status: "passed",
+      evidence: "all required structured reviews passed or resolved P0/P1/P2 findings"
+    });
+  });
+
+  it("marks legacy complete pass review evidence without a comment as pending", async () => {
+    const repoRoot = boundWorkflowRepo("WAIT_REVIEW_OR_CI");
+    const storage = new SqliteAgentLoopStorage(join(repoRoot, ".agent-loop", "state.sqlite"));
+    const run = storage.getCurrentRun();
+    if (!run) throw new Error("missing bound run");
+    appendReviewEvidence(storage, run.id, "Claude pass evidence lacks linked comment.", {
+      reviewer: "claude_acp",
+      requirement: "required",
+      progress: "complete",
+      result: "pass",
+      severitySummary: "none"
+    });
+    storage.close();
+    const server = await startDashboardServer({ repoRoot, token: "test-token", serveUi: false });
+    handles.push(server);
+
+    const board = await (await fetch(`${base(server)}/api/workflow-board`)).json() as {
+      data: { reviewReports: Array<{ agent: string; progress?: string; status: string; prComment: string }> };
+    };
+
+    expect(board.data.reviewReports.find((row) => row.agent === "Claude ACP")).toMatchObject({
+      progress: "incomplete",
+      status: "pending",
+      prComment: "missing"
     });
   });
 
