@@ -7,6 +7,8 @@ import { SqliteAgentLoopStorage } from "../core/storage.js";
 import { cleanupTempRepos, tempRepo } from "./helpers.js";
 
 describe("hook policy", () => {
+  const trustedSkillHome = process.env.HOME?.replaceAll("\\", "/") ?? "/Users/mac-mini";
+
   afterEach(() => cleanupTempRepos());
 
   it("serializes PreToolUse denies using the cross-version block contract", () => {
@@ -119,14 +121,14 @@ describe("hook policy", () => {
       { file: "pnpm", args: ["agent-loop", "resume", "--json"] },
       { file: "pnpm", args: ["agent-loop", "recover", "--json"] },
       {
-        file: "/Users/mac-mini/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs",
+        file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
         args: ["--cwd", "/repo", "--mode", "plan", "--permission", "reject", "--prompt", "Review"],
-        raw: "/Users/mac-mini/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --prompt Review"
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --prompt Review`
       },
       {
-        file: "/Users/mac-mini/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs",
+        file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
         args: ["--cwd", "/repo", "--role", "reviewer", "--mode", "packet-only", "--prompt", "Review"],
-        raw: "/Users/mac-mini/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --prompt Review"
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --prompt Review`
       },
       { file: "curl", args: ["--head", "http://127.0.0.1:3000/health"] },
       { file: "curl", args: ["--fail", "--silent", "--show-error", "--max-time", "5", "http://localhost:3000/health"] },
