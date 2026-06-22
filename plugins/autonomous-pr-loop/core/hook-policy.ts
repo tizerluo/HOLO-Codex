@@ -16,6 +16,7 @@ export interface HookCommand {
 
 export interface HookPolicyInput {
   repoRoot: string;
+  repoId?: string;
   command: HookCommand;
   isWorker?: boolean;
   protectedPaths?: string[];
@@ -43,6 +44,11 @@ interface ActiveMaintainerOverride {
 
 const REQUIRED_PUBLISH_EVIDENCE_SUBSTAGES = ["lint", "full_tests", "gitnexus_detect"] as const;
 
+interface HookAllowlistContext {
+  repoRoot: string;
+  repoId?: string;
+}
+
 /** Normalize a Codex PreToolUse hook payload into an argv-like command. */
 export function commandFromHookPayload(payload: unknown): HookCommand | undefined {
   if (!isRecord(payload)) {
@@ -68,6 +74,10 @@ export function evaluateHookPolicy(input: HookPolicyInput): HookPolicyDecision {
   if (shellControl) {
     return deny(renderCommand(normalized), shellControl, "policy_violation", "Run one allowlisted command at a time without shell control operators.");
   }
+  const environmentScope = environmentScopePolicy(normalized);
+  if (environmentScope) {
+    return deny(renderCommand(normalized), environmentScope, "policy_violation", "Do not override repository scope through environment variables.");
+  }
   const command = unwrapCommand(normalized);
   const blockedCommand = renderCommand(command);
   const destructive = destructivePolicy(command);
@@ -90,7 +100,7 @@ export function evaluateHookPolicy(input: HookPolicyInput): HookPolicyDecision {
     return deny(blockedCommand, gate.policy, gate.gate, gate.nextAction);
   }
   const override = activeMaintainerOverride(input.storage, lifecycleOverrideScope(command), input.runId);
-  if (override && matchesHookAllowlist(command)) {
+  if (override && matchesHookAllowlist(command, input)) {
     return {
       allow: true,
       matchedPolicy: `maintainer_override:${override.scope}`,
@@ -104,7 +114,7 @@ export function evaluateHookPolicy(input: HookPolicyInput): HookPolicyDecision {
       }
     };
   }
-  if (!matchesHookAllowlist(command)) {
+  if (!matchesHookAllowlist(command, input)) {
     return deny(blockedCommand, "command_not_in_hook_allowlist", "policy_violation", "Use agent-loop MCP/CLI control surfaces or an allowlisted read/check command.");
   }
   return {
@@ -159,6 +169,7 @@ export function evaluatePreToolUseHook(payload: unknown, repoRoot?: string): Hoo
     const decision = evaluateHookPolicy({
       repoRoot: route.binding.repoRoot,
       command,
+      repoId: config.repoId,
       storage,
       ...(route.binding.runId ? { runId: route.binding.runId } : {}),
       protectedPaths: config.protectedPaths
@@ -378,6 +389,13 @@ function workerLifecyclePolicy(command: HookCommand): string | undefined {
   return undefined;
 }
 
+function environmentScopePolicy(command: HookCommand): string | undefined {
+  if (command.file === "env" && command.args.some((arg) => arg.startsWith("GH_REPO="))) {
+    return "environment_repo_scope_forbidden";
+  }
+  return undefined;
+}
+
 function protectedPathPolicy(command: HookCommand, protectedPaths: string[]): string | undefined {
   const args = stripGitGlobalOptions(command.args);
   if (command.file !== "git" || args[0] !== "add") {
@@ -389,35 +407,57 @@ function protectedPathPolicy(command: HookCommand, protectedPaths: string[]): st
   return hit ? `protected_path:${hit}` : undefined;
 }
 
-function matchesHookAllowlist(command: HookCommand): boolean {
+function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
   const args = stripGitGlobalOptions(command.args);
-  if (command.file === "rg" && matchesRipgrepAllowlist(command.args) || isApplyPatchCommand(command)) {
+  if (isApplyPatchCommand(command) || matchesLocalInspectionAllowlist(command) || matchesStructuredInspectionAllowlist(command)) {
     return true;
   }
   if (command.file === "git") {
     return args[0] === "status" ||
       args[0] === "branch" && args[1] === "--show-current" ||
+      args[0] === "branch" && args[1] === "-vv" ||
       args[0] === "rev-parse" ||
-      args[0] === "diff" ||
-      ["log", "show"].includes(args[0] ?? "") ||
+      args[0] === "diff" && matchesGitReadArgsAllowlist(args.slice(1)) ||
+      ["log", "show"].includes(args[0] ?? "") && matchesGitReadArgsAllowlist(args.slice(1)) ||
       args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) ||
+      args[0] === "remote" && args[1] === "-v" ||
+      args[0] === "ls-remote" && matchesGitLsRemoteAllowlist(args.slice(1)) ||
+      args[0] === "merge-base" ||
+      args[0] === "cat-file" && matchesGitCatFileAllowlist(args.slice(1)) ||
+      args[0] === "fetch" && matchesGitFetchAllowlist(args.slice(1)) ||
+      args[0] === "pull" && matchesGitPullAllowlist(args.slice(1)) ||
       args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") ||
+      args[0] === "switch" && args[1] === "-c" && args.length === 3 && isCodexBranch(args[2] ?? "") ||
       args[0] === "add" && args[1] === "--" ||
       args[0] === "commit" && args[1] === "-m" ||
       args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
   }
   if (command.file === "gh") {
+    if (!matchesGhRepoScope(command.args, context.repoId)) {
+      return false;
+    }
     return command.args[0] === "auth" && command.args[1] === "status" ||
+      command.args[0] === "issue" && ["create", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) ||
+      command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") ||
       command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") ||
+      command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) ||
+      command.args[0] === "run" && command.args[1] === "view" && command.args.includes("--log") ||
       command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) ||
-      command.args[0] === "api" && command.args[1] === "graphql";
+      command.args[0] === "api" && command.args[1] === "graphql" && matchesGhGraphqlAllowlist(command.args.slice(2), context.repoId);
   }
   if (command.file === "pnpm") {
-    return command.args[0] === "test" ||
+    return command.args[0] === "install" && command.args.length === 2 && command.args[1] === "--frozen-lockfile" ||
+      command.args[0] === "test" ||
       command.args[0] === "lint" ||
       command.args[0] === "build:hooks" ||
       command.args[0] === "build:mcp" ||
-      command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1));
+      command.args[0] === "exec" && matchesPnpmExecAllowlist(command.args.slice(1)) ||
+      ["view", "info"].includes(command.args[0] ?? "") ||
+      command.args[0] === "pack" && matchesPnpmPackAllowlist(command.args.slice(1)) ||
+      command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1), context);
+  }
+  if (command.file === "npm") {
+    return matchesNpmAllowlist(command.args);
   }
   if (command.file === "npx") {
     return command.args[0] === "gitnexus" &&
@@ -426,7 +466,91 @@ function matchesHookAllowlist(command: HookCommand): boolean {
   if (command.file === "codex") {
     return command.args[0] === "--version";
   }
+  if (matchesReviewerDispatchAllowlist(command, context)) {
+    return true;
+  }
+  if (matchesDashboardSmokeAllowlist(command)) {
+    return true;
+  }
   return false;
+}
+
+function matchesLocalInspectionAllowlist(command: HookCommand): boolean {
+  if (hasUnsafePathArg(command.args)) {
+    return false;
+  }
+  if (command.file === "rg") {
+    return matchesRipgrepAllowlist(command.args);
+  }
+  if (["pwd", "stat", "file", "wc", "nl", "cat"].includes(command.file)) {
+    return !command.args.some(isDangerousReadArg);
+  }
+  if (command.file === "ls") {
+    return !command.args.some((arg) => arg === "--hyperlink" || arg.startsWith("--format=") && arg.includes("shell"));
+  }
+  if (command.file === "head" || command.file === "tail") {
+    return !command.args.some((arg) => ["-f", "--follow", "--pid"].includes(arg) || arg.startsWith("--pid="));
+  }
+  if (command.file === "sed") {
+    return matchesSedReadAllowlist(command.args);
+  }
+  if (command.file === "find") {
+    return matchesFindReadAllowlist(command.args);
+  }
+  return false;
+}
+
+function matchesStructuredInspectionAllowlist(command: HookCommand): boolean {
+  if (hasUnsafePathArg(command.args)) {
+    return false;
+  }
+  return command.file === "jq" ||
+    command.file === "python" && command.args[0] === "-m" && command.args[1] === "json.tool";
+}
+
+function isDangerousReadArg(arg: string): boolean {
+  return arg === "--help" || arg === "--version" ? false : arg.startsWith("--") && arg.includes("output");
+}
+
+function hasUnsafePathArg(args: string[]): boolean {
+  return args.some((arg) => {
+    if (!arg || arg === "-" || arg.startsWith("-")) {
+      return false;
+    }
+    return arg.startsWith("/") || arg.startsWith("~") || arg.split(/[\\/]/).includes("..");
+  });
+}
+
+function matchesSedReadAllowlist(args: string[]): boolean {
+  if (args.some((arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place" || arg.startsWith("--in-place="))) {
+    return false;
+  }
+  const normalized = args.filter((arg) => arg !== "--");
+  if (normalized[0] !== "-n" || normalized.length < 3) {
+    return false;
+  }
+  const script = normalized[1] ?? "";
+  return /^(\d+|\$)?(,(\d+|\$))?p$/.test(script);
+}
+
+function matchesFindReadAllowlist(args: string[]): boolean {
+  if (args.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls", "-fprint", "-fprintf"].includes(arg))) {
+    return false;
+  }
+  const allowedPrimaries = new Set(["-maxdepth", "-mindepth", "-name", "-iname", "-path", "-type", "-print"]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (!arg.startsWith("-")) {
+      continue;
+    }
+    if (!allowedPrimaries.has(arg)) {
+      return false;
+    }
+    if (["-maxdepth", "-mindepth", "-name", "-iname", "-path", "-type"].includes(arg)) {
+      index += 1;
+    }
+  }
+  return true;
 }
 
 function matchesRipgrepAllowlist(args: string[]): boolean {
@@ -442,10 +566,95 @@ function matchesGitGrepAllowlist(args: string[]): boolean {
   );
 }
 
+function matchesGitReadArgsAllowlist(args: string[]): boolean {
+  return !args.some((arg) =>
+    arg === "--ext-diff" ||
+    arg === "--no-index" ||
+    arg === "--textconv" ||
+    arg === "--output" ||
+    arg.startsWith("--output=") ||
+    arg.startsWith("--ext-diff=")
+  );
+}
+
 function matchesGitPushAllowlist(args: string[]): boolean {
-  return args.length >= 3 &&
+  return args.length === 3 &&
     args[0] === "-u" &&
+    args[1] === "origin" &&
+    isCodexBranch(args[2] ?? "") &&
     args.every((arg) => !["-f", "-d", "--force", "--force-with-lease", "--mirror", "--delete"].includes(arg) && !arg.startsWith("+") && !/^:[^:]+/.test(arg));
+}
+
+function matchesGitLsRemoteAllowlist(args: string[]): boolean {
+  if (args.length === 0) {
+    return true;
+  }
+  if (args[0] !== "origin") {
+    return false;
+  }
+  return args.slice(1).every((arg) => arg === "main" || isCodexBranch(arg));
+}
+
+function matchesGitFetchAllowlist(args: string[]): boolean {
+  return args.length === 2 &&
+    args[0] === "origin" &&
+    ((args[1] ?? "") === "main" || isCodexBranch(args[1] ?? ""));
+}
+
+function matchesGitPullAllowlist(args: string[]): boolean {
+  return args.length === 3 &&
+    args[0] === "--ff-only" &&
+    args[1] === "origin" &&
+    args[2] === "main";
+}
+
+function matchesGitCatFileAllowlist(args: string[]): boolean {
+  return ["-p", "-t", "-s", "-e"].includes(args[0] ?? "") && args.length >= 2;
+}
+
+function isCodexBranch(value: string): boolean {
+  return /^codex\/[A-Za-z0-9._/-]+$/.test(value) && !value.includes("..") && !value.endsWith("/");
+}
+
+function matchesGhRepoScope(args: string[], repoId?: string): boolean {
+  const repoValues: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--repo" || arg === "-R") {
+      repoValues.push(args[index + 1] ?? "");
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repo=")) {
+      repoValues.push(arg.slice("--repo=".length));
+    }
+  }
+  return repoValues.length === 0 || Boolean(repoId) && repoValues.every((value) => value === repoId);
+}
+
+function matchesGhWriteAllowlist(args: string[], repoId?: string): boolean {
+  if (!repoId || !matchesGhExplicitRepo(args, repoId)) {
+    return false;
+  }
+  const forbiddenFlags = new Set(["--body-file", "-F", "--field", "--raw-field", "--input"]);
+  return !args.some((arg) => forbiddenFlags.has(arg) || arg.startsWith("--body-file=") || arg.startsWith("--input="));
+}
+
+function matchesGhExplicitRepo(args: string[], repoId: string): boolean {
+  const repoValues = flagValues(args, "--repo").concat(flagValues(args, "-R"));
+  return repoValues.length === 1 && repoValues[0] === repoId;
+}
+
+function matchesGhGraphqlAllowlist(args: string[], repoId?: string): boolean {
+  if (!repoId || !matchesGhExplicitRepo(args, repoId)) {
+    return false;
+  }
+  const forbiddenFlags = new Set(["-F", "--field", "--raw-field", "--input"]);
+  if (args.some((arg) => forbiddenFlags.has(arg) || arg.startsWith("-F") || arg.startsWith("--field=") || arg.startsWith("--raw-field=") || arg.startsWith("--input="))) {
+    return false;
+  }
+  const query = args.find((arg, index) => args[index - 1] === "-f" && arg.startsWith("query=") || arg.startsWith("query="));
+  return Boolean(query) && !/\bmutation\b/i.test(query ?? "");
 }
 
 function matchesGhPrMergeAllowlist(args: string[]): boolean {
@@ -469,15 +678,95 @@ function isApplyPatchCommand(command: HookCommand): boolean {
   return command.file === "apply_patch" || command.raw?.startsWith("*** Begin Patch") === true;
 }
 
-function matchesAgentLoopAllowlist(args: string[]): boolean {
+function matchesPnpmExecAllowlist(args: string[]): boolean {
+  if (args[0] === "vitest") {
+    return !args.some(hasUnsafeToolingArg);
+  }
+  return args[0] === "tsx" && typeof args[1] === "string" && isRepoOwnedTsxEntrypoint(args[1]);
+}
+
+function isRepoOwnedTsxEntrypoint(value: string): boolean {
+  const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "");
+  return !normalized.split("/").includes("..") &&
+    (
+      normalized.startsWith("plugins/autonomous-pr-loop/scripts/") ||
+      normalized.startsWith("plugins/autonomous-pr-loop/mcp-server/src/")
+    );
+}
+
+function matchesPnpmPackAllowlist(args: string[]): boolean {
+  return args.includes("--dry-run") &&
+    args.includes("--ignore-scripts") &&
+    !args.some((arg) => arg === "--pack-destination" || arg.startsWith("--pack-destination="));
+}
+
+function matchesNpmAllowlist(args: string[]): boolean {
+  if (args[0] === "whoami" && args.length === 1) {
+    return true;
+  }
+  if (args[0] === "ping") {
+    return args.length === 2 && args[1] === "--json";
+  }
+  if (["view", "info"].includes(args[0] ?? "")) {
+    return true;
+  }
+  if (args[0] === "pack") {
+    return args.includes("--ignore-scripts") && args.includes("--dry-run") && args.includes("--json");
+  }
+  if (args[0] === "install") {
+    const prefix = singleFlagValue(args, "--prefix");
+    const specs = args.slice(1).filter((arg, index) => {
+      const previous = args[index] ?? "";
+      return !arg.startsWith("-") && previous !== "--prefix";
+    });
+    return Boolean(prefix) &&
+      isSafeTempPath(prefix ?? "") &&
+      specs.length >= 1 &&
+      specs.every(isSafeNpmInstallSpec) &&
+      args.includes("--ignore-scripts") &&
+      !args.some((arg) => ["--global", "-g"].includes(arg));
+  }
+  return false;
+}
+
+function hasUnsafeToolingArg(arg: string): boolean {
+  return arg.startsWith("/") ||
+    arg.startsWith("~") ||
+    arg.split(/[\\/]/).includes("..") ||
+    arg === "--config" ||
+    arg.startsWith("--config=");
+}
+
+function isSafeTempPath(value: string): boolean {
+  return value.startsWith("/tmp/") || value.startsWith("/var/folders/") || value.startsWith("./tmp/") || value.startsWith("tmp/");
+}
+
+function isSafeNpmInstallSpec(value: string): boolean {
+  if (value.startsWith("http:") || value.startsWith("https:") || value.startsWith("git+") || value.startsWith("github:") || value.startsWith("ssh:")) {
+    return false;
+  }
+  return value === "holo-codex" ||
+    value.endsWith(".tgz") ||
+    value.startsWith("./") ||
+    value.startsWith("/tmp/") ||
+    value.startsWith("/var/folders/");
+}
+
+function matchesAgentLoopAllowlist(args: string[], context: HookAllowlistContext): boolean {
   if (["status", "doctor", "logs", "observe", "timeline", "workers", "stop"].includes(args[0] ?? "")) {
+    return true;
+  }
+  if (["approve-gate", "resume", "recover"].includes(args[0] ?? "")) {
     return true;
   }
   if (args[0] === "local") {
     return args[1] === "doctor";
   }
+  if (args[0] === "install-hooks") {
+    return singleFlagValue(args, "--repo") === context.repoRoot;
+  }
   if (args[0] === "hooks") {
-    return ["doctor", "list"].includes(args[1] ?? "");
+    return ["doctor", "list", "bind"].includes(args[1] ?? "");
   }
   if (args[0] === "delivery") {
     return ["bind", "stage"].includes(args[1] ?? "");
@@ -489,6 +778,129 @@ function matchesAgentLoopAllowlist(args: string[]): boolean {
     return args[1] === "approve";
   }
   return false;
+}
+
+function matchesReviewerDispatchAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
+  return matchesClaudeAcpDispatchAllowlist(command, context) || matchesAgyDispatchAllowlist(command, context);
+}
+
+function matchesClaudeAcpDispatchAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
+  const { scriptEvidence, args } = dispatchScriptArgs(command);
+  if (!isTrustedDispatchScript(scriptEvidence, "dispatch-claude-acp", "claude-acp-dispatch.mjs")) {
+    return false;
+  }
+  const modes = flagValues(args, "--mode");
+  if (modes.length > 1) {
+    return false;
+  }
+  return singleFlagValue(args, "--cwd") === context.repoRoot &&
+    (modes[0] ?? "plan") === "plan" &&
+    singleFlagValue(args, "--permission") === "reject";
+}
+
+function matchesAgyDispatchAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
+  const { scriptEvidence, args } = dispatchScriptArgs(command);
+  if (!isTrustedDispatchScript(scriptEvidence, "dispatch-agy-headless", "agy-dispatch.mjs")) {
+    return false;
+  }
+  if (args.some((arg) => arg === "--allow-dangerous" || arg.startsWith("--allow-dangerous="))) {
+    return false;
+  }
+  const modes = flagValues(args, "--mode");
+  if (modes.length > 1) {
+    return false;
+  }
+  const role = singleFlagValue(args, "--role") ?? "";
+  const mode = modes[0] ?? "packet-only";
+  return singleFlagValue(args, "--cwd") === context.repoRoot &&
+    ["reviewer", "ui-reviewer", "tester", "planner", "researcher", "second-opinion"].includes(role) &&
+    ["packet-only", "sandbox-inspect"].includes(mode);
+}
+
+function dispatchScriptArgs(command: HookCommand): { scriptEvidence: string; args: string[] } {
+  const rawScriptPath = command.raw?.match(/^\S+/)?.[0];
+  const scriptPath = command.file === "node" ? command.args[0] ?? "" : rawScriptPath ?? command.file;
+  const args = command.file === "node" ? command.args.slice(1) : command.args;
+  return {
+    scriptEvidence: `${scriptPath}\n${command.raw ?? ""}`.replaceAll("\\", "/"),
+    args
+  };
+}
+
+function isTrustedDispatchScript(scriptEvidence: string, skillName: string, scriptName: string): boolean {
+  const scriptPath = scriptEvidence.split("\n")[0]?.replaceAll("\\", "/") ?? "";
+  return scriptPath === `/Users/mac-mini/.codex/skills/${skillName}/scripts/${scriptName}` ||
+    scriptPath === `/Users/mac-mini/.agents/skills/${skillName}/scripts/${scriptName}`;
+}
+
+function matchesDashboardSmokeAllowlist(command: HookCommand): boolean {
+  if (command.file === "ps") {
+    return true;
+  }
+  if (command.file === "lsof") {
+    return command.args.length >= 2 && command.args[0] === "-i" && /^:\d+$/.test(command.args[1] ?? "");
+  }
+  if (command.file === "curl") {
+    return matchesCurlLocalhostReadAllowlist(command.args);
+  }
+  return false;
+}
+
+function matchesCurlLocalhostReadAllowlist(args: string[]): boolean {
+  const urls = args.filter((arg) => /^https?:\/\//.test(arg));
+  if (urls.length !== 1) {
+    return false;
+  }
+  const forbiddenFlags = new Set([
+    "-K", "--config", "--next", "-o", "--output", "-O", "--remote-name",
+    "-x", "--proxy", "-T", "--upload-file", "-d", "--data", "--data-raw",
+    "--data-binary", "-F", "--form", "--resolve", "--connect-to", "-L",
+    "--location", "--location-trusted"
+  ]);
+  if (args.some((arg) =>
+    forbiddenFlags.has(arg) ||
+    /^(-x|-K|-o|-T|-d|-F).+/.test(arg) ||
+    /^(--config|--output|--proxy|--upload-file|--data|--data-raw|--data-binary|--form|--resolve|--connect-to)=/.test(arg)
+  )) {
+    return false;
+  }
+  const requestFlag = args.find((arg, index) => {
+    if (arg.startsWith("--request=")) {
+      return !["GET", "HEAD"].includes(arg.slice("--request=".length));
+    }
+    return ["-X", "--request"].includes(arg) && !["GET", "HEAD"].includes(args[index + 1] ?? "");
+  });
+  if (requestFlag) {
+    return false;
+  }
+  const url = urls[0];
+  return Boolean(url) && /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(\/|$)/.test(url ?? "");
+}
+
+function valueAfterFlag(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+function singleFlagValue(args: string[], flag: string): string | undefined {
+  const values = flagValues(args, flag);
+  return values.length === 1 ? values[0] : undefined;
+}
+
+function flagValues(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === flag) {
+      values.push(args[index + 1] ?? "");
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith(`${flag}=`)) {
+      values.push(arg.slice(flag.length + 1));
+    }
+  }
+  return values;
 }
 
 function shellControlPolicy(command: HookCommand): string | undefined {
@@ -572,7 +984,43 @@ function tokenizeCommand(command: string): HookCommand {
 }
 
 function hasShellControlOperator(value: string): boolean {
-  return /&&|\|\||[;|<>\n\r]/.test(value);
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index] ?? "";
+    const next = value[index + 1] ?? "";
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote === "'") {
+      if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if ((char === "$" && next === "(") || char === "`" || (char === "<" || char === ">") && next === "(") {
+      return true;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      continue;
+    }
+    if (char === "&" && next === "&" || char === "|" || char === ";" || char === "<" || char === ">" || char === "\n" || char === "\r") {
+      return true;
+    }
+  }
+  return quote !== undefined;
 }
 
 function stripGitGlobalOptions(args: string[]): string[] {
