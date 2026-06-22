@@ -332,12 +332,18 @@ jobs:
 
       - name: Publish validated tarball to npm
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ inputs.version }}
           TGZ: ${{ needs.validate.outputs.tgz }}
         run: |
           set -euo pipefail
           test -f "release-candidate/$TGZ"
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN secret fallback for npm publish."
+          else
+            echo "Using npm Trusted Publishing OIDC for npm publish."
+          fi
           npm_version_status() {
             local status
             for attempt in 1 2 3; do
