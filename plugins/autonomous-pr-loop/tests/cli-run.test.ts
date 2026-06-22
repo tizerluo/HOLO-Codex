@@ -150,6 +150,7 @@ describe("PR B CLI", () => {
     const payload = JSON.parse(result.stdout) as {
       ok: boolean;
       status: string;
+      exitCodeContract: string;
       dashboard: { url: string; loopbackOnly: boolean };
       checks: Array<{ id: string; status: string; evidence: string }>;
     };
@@ -157,10 +158,14 @@ describe("PR B CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(payload.ok).toBe(true);
     expect(payload.status).toBe("warn");
+    expect(payload.exitCodeContract).toContain("Inspect status and checks");
     expect(payload.dashboard.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
     expect(payload.dashboard.loopbackOnly).toBe(true);
     expect(payload.checks.find((check) => check.id === "workflow_status_consistency")?.status).toBe("passed");
-    expect(payload.checks.find((check) => check.id === "loading_settled")?.status).toBe("passed");
+    expect(payload.checks.find((check) => check.id === "loading_settled")).toMatchObject({
+      status: "passed",
+      evidence: expect.stringContaining("request deadline")
+    });
     expect(payload.checks.find((check) => check.id === "live_ui_validation")?.status).toBe("incomplete");
     expect(payload.checks.find((check) => check.id === "responsive_viewports")?.status).toBe("incomplete");
     expect(JSON.stringify(payload)).not.toContain("Dashboard token");
@@ -197,6 +202,15 @@ describe("PR B CLI", () => {
     expect(JSON.parse(typo.stdout).error.code).toBe("unknown_command");
     expect(JSON.parse(unsupported.stdout).error.code).toBe("invalid_config");
     expect(JSON.parse(unsupportedHost.stdout).error.code).toBe("invalid_config");
+  });
+
+  it("documents dashboard smoke warning and incomplete-check exit-code contract", async () => {
+    const repoRoot = tempRepo("agent-loop-dashboard-smoke-help-");
+    const help = await runAgentLoopCli(["dashboard", "smoke", "--help"], repoRoot);
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("smoke exit code 0 means no failed checks");
+    expect(help.stdout).toContain("incomplete Browser validation");
   });
 
   it("keeps two --repo targets isolated", async () => {

@@ -224,7 +224,7 @@ function commandHelpUsage(command: string): string | undefined {
     local: "agent-loop local install|rollback|doctor|snapshots [--repo /path/to/repo] [--snapshot PATH] [--json]",
     "approve-gate": "agent-loop approve-gate <gate-id> --note \"...\" [--next-state STATE] [--json]",
     "maintainer-override": "agent-loop maintainer-override approve --scope publish|merge --reason \"...\" [--ttl-minutes N] [--run RUN_ID] [--json]",
-    dashboard: "agent-loop dashboard [smoke] [--host 127.0.0.1] [--port 0] [--json]",
+    dashboard: "agent-loop dashboard [smoke] [--host 127.0.0.1] [--port 0] [--json] (smoke exit code 0 means no failed checks; inspect status/checks for warning or incomplete Browser validation)",
     evidence: "agent-loop evidence append --stage STAGE --summary \"...\" [--run RUN_ID] [--substage ID] [--actor ACTOR] [--status STATUS] [--source SOURCE] [--ref REF] [--artifact ID] [--json]",
     delivery: "agent-loop delivery bind|stage [options] [--json]"
   };
@@ -1012,6 +1012,7 @@ async function dashboard(repoRoot: string, args: string[], json: boolean, locale
     }, [
       "Usage: agent-loop dashboard [--host 127.0.0.1] [--port 0]",
       "Usage: agent-loop dashboard smoke [--json]",
+      "Smoke exit code 0 means no failed checks; inspect status/checks because Browser validation can remain incomplete.",
       cliText(locale, "dashboardHelp")
     ]);
   }
@@ -1062,6 +1063,7 @@ async function dashboardSmoke(repoRoot: string, args: string[], json: boolean): 
 function dashboardSmokeText(smoke: DashboardSmokeReport): string {
   return [
     `dashboard smoke: ${smoke.status}`,
+    smoke.exitCodeContract,
     `url: ${smoke.dashboard.url}`,
     ...smoke.checks.map((check) => `${check.status}: ${check.label} - ${check.evidence}`)
   ].join("\n") + "\n";

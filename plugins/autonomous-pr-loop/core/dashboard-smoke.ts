@@ -12,6 +12,7 @@ export interface DashboardSmokeCheck {
 export interface DashboardSmokeReport {
   ok: boolean;
   status: "pass" | "fail" | "warn";
+  exitCodeContract: string;
   targetRepoRoot: string;
   dashboard: {
     url: string;
@@ -31,6 +32,7 @@ interface WorkflowBoardLike {
 
 const BAD_RENDER_TOKENS = ["undefined", "NaN", "[object Object]"];
 const BAD_STRUCTURED_PAYLOAD_TOKENS = ["NaN", "[object Object]"];
+const DEFAULT_SMOKE_TIMEOUT_MS = 10_000;
 const API_ENDPOINTS = [
   { id: "dashboard_meta", label: "Dashboard meta API", path: "/api/dashboard-meta" },
   { id: "mission_control", label: "Mission Control API", path: "/api/mission-control" },
@@ -40,7 +42,7 @@ const API_ENDPOINTS = [
 ] as const;
 
 /** Run a local dashboard release-readiness smoke check without leaking the dashboard token. */
-export async function runDashboardSmoke(repoRoot: string, options: { host?: string; port?: number } = {}): Promise<DashboardSmokeReport> {
+export async function runDashboardSmoke(repoRoot: string, options: { host?: string; port?: number; timeoutMs?: number } = {}): Promise<DashboardSmokeReport> {
   const server = await startDashboardServer({
     repoRoot,
     targetRepoRoot: repoRoot,
@@ -48,12 +50,24 @@ export async function runDashboardSmoke(repoRoot: string, options: { host?: stri
     ...(options.port !== undefined ? { port: options.port } : {})
   });
   const checks: DashboardSmokeCheck[] = [];
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SMOKE_TIMEOUT_MS;
+  const deadline = createSmokeDeadline(timeoutMs);
+  const startedAt = Date.now();
   try {
-    const html = await getText(server.url);
-    checks.push(checkHttpHtml(html));
-    checks.push(checkBadTokens("dashboard_index_tokens", "Dashboard index render tokens", html));
+    try {
+      const html = await getText(server.url, deadline.signal);
+      checks.push(checkHttpHtml(html));
+      checks.push(checkBadTokens("dashboard_index_tokens", "Dashboard index render tokens", html));
+    } catch (error) {
+      checks.push({
+        id: "dashboard_index",
+        label: "Dashboard index",
+        status: "failed",
+        evidence: smokeFetchError(error, "GET / failed.")
+      });
+    }
 
-    const apiResults = await Promise.all(API_ENDPOINTS.map((endpoint) => getJsonCheck(server.url, endpoint.path, endpoint.id, endpoint.label)));
+    const apiResults = await Promise.all(API_ENDPOINTS.map((endpoint) => getJsonCheck(server.url, endpoint.path, endpoint.id, endpoint.label, deadline.signal)));
     checks.push(...apiResults.map((item) => item.check));
     checks.push(checkBadTokens(
       "api_payloads",
@@ -64,12 +78,7 @@ export async function runDashboardSmoke(repoRoot: string, options: { host?: stri
     ));
     const workflow = apiResults.find((item) => item.id === "workflow_board")?.payload;
     checks.push(checkWorkflowBoardSmokeConsistency(workflow));
-    checks.push({
-      id: "loading_settled",
-      label: "Loading settled",
-      status: "passed",
-      evidence: "Dashboard release-readiness API requests settled before the smoke timeout."
-    });
+    checks.push(checkLoadingSettled(deadline.timedOut, Date.now() - startedAt, timeoutMs));
     checks.push({
       id: "live_ui_validation",
       label: "Live UI navigation and console validation",
@@ -84,21 +93,22 @@ export async function runDashboardSmoke(repoRoot: string, options: { host?: stri
     });
     return report(repoRoot, server, checks);
   } finally {
+    deadline.clear();
     await server.close();
   }
 }
 
-async function getText(baseUrl: string): Promise<string> {
-  const response = await fetch(baseUrl);
+async function getText(baseUrl: string, signal: AbortSignal): Promise<string> {
+  const response = await fetch(baseUrl, { signal });
   if (!response.ok) {
     throw new Error(`GET / failed with HTTP ${response.status}`);
   }
   return await response.text();
 }
 
-async function getJsonCheck(baseUrl: string, path: string, id: string, label: string): Promise<{ id: string; payload?: unknown; check: DashboardSmokeCheck }> {
+async function getJsonCheck(baseUrl: string, path: string, id: string, label: string, signal: AbortSignal): Promise<{ id: string; payload?: unknown; check: DashboardSmokeCheck }> {
   try {
-    const response = await fetch(new URL(path, baseUrl));
+    const response = await fetch(new URL(path, baseUrl), { signal });
     if (!response.ok) {
       return {
         id,
@@ -110,7 +120,7 @@ async function getJsonCheck(baseUrl: string, path: string, id: string, label: st
   } catch (error) {
     return {
       id,
-      check: { id, label, status: "failed", evidence: error instanceof Error ? error.message : `GET ${path} failed.` }
+      check: { id, label, status: "failed", evidence: smokeFetchError(error, `GET ${path} failed.`) }
     };
   }
 }
@@ -204,12 +214,30 @@ export function checkWorkflowBoardSmokeConsistency(payload: unknown): DashboardS
   };
 }
 
+function checkLoadingSettled(timedOut: boolean, elapsedMs: number, timeoutMs: number): DashboardSmokeCheck {
+  if (timedOut) {
+    return {
+      id: "loading_settled",
+      label: "Loading settled",
+      status: "failed",
+      evidence: `Dashboard smoke exceeded the ${timeoutMs}ms request deadline.`
+    };
+  }
+  return {
+    id: "loading_settled",
+    label: "Loading settled",
+    status: "passed",
+    evidence: `Dashboard index and API requests completed in ${elapsedMs}ms within the ${timeoutMs}ms request deadline.`
+  };
+}
+
 function report(repoRoot: string, server: { url: string; host: string; port: number }, checks: DashboardSmokeCheck[]): DashboardSmokeReport {
   const hasFailure = checks.some((check) => check.status === "failed");
   const hasWarning = checks.some((check) => check.status === "warning" || check.status === "incomplete");
   return {
     ok: !hasFailure,
     status: hasFailure ? "fail" : hasWarning ? "warn" : "pass",
+    exitCodeContract: "Exit 0 means no failed checks. Inspect status and checks for warning or incomplete Browser validation items.",
     targetRepoRoot: repoRoot,
     dashboard: {
       url: server.url,
@@ -219,6 +247,27 @@ function report(repoRoot: string, server: { url: string; host: string; port: num
     },
     checks
   };
+}
+
+function createSmokeDeadline(timeoutMs: number): { signal: AbortSignal; clear: () => void; timedOut: boolean } {
+  const controller = new AbortController();
+  const deadline = {
+    signal: controller.signal,
+    clear: () => clearTimeout(timer),
+    timedOut: false
+  };
+  const timer = setTimeout(() => {
+    deadline.timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return deadline;
+}
+
+function smokeFetchError(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return error.name === "AbortError" ? "Request timed out before the dashboard smoke deadline." : error.message;
+  }
+  return fallback;
 }
 
 function isWorkflowBoardLike(value: unknown): value is WorkflowBoardLike {
