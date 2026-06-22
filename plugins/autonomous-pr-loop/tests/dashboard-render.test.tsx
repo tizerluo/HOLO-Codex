@@ -205,6 +205,39 @@ describe("dashboard render", () => {
     expect(screen.getByRole("button", { name: "Run Explicit Recovery" })).toBeTruthy();
   });
 
+  it("smoke-renders every primary navigation page without console warnings or bad tokens", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<App api={noopApi()} initialData={fixture("BLOCKED")} />);
+
+    const pages = [
+      "Mission Control",
+      "Plan Navigator",
+      "Policy Config",
+      "Dry-run Preview",
+      "Notifications",
+      "Observability Console",
+      "Gate Center",
+      "PR Inbox",
+      "Worker Runs",
+      "Scope Guard",
+      "Event Ledger",
+      "Artifact Diff Viewer",
+      "Recovery Center"
+    ];
+    for (const page of pages) {
+      fireEvent.click(screen.getByRole("button", { name: page }));
+      expect(await screen.findByRole("heading", { name: page })).toBeTruthy();
+      const text = document.body.textContent ?? "";
+      expect(text).not.toContain("undefined");
+      expect(text).not.toContain("NaN");
+      expect(text).not.toContain("[object Object]");
+    }
+
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("renders timeline summary on mission control", () => {
     render(<App api={noopApi()} initialData={fixture("RUNNING")} />);
 

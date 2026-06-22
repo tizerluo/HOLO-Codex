@@ -3741,6 +3741,9 @@ function matchesAgentLoopAllowlist(args, context) {
   if (args[0] === "delivery") {
     return ["bind", "stage"].includes(args[1] ?? "");
   }
+  if (args[0] === "dashboard") {
+    return matchesAgentLoopDashboardAllowlist(args.slice(1));
+  }
   if (args[0] === "evidence") {
     return args[1] === "append";
   }
@@ -3748,6 +3751,35 @@ function matchesAgentLoopAllowlist(args, context) {
     return args[1] === "approve";
   }
   return false;
+}
+function matchesAgentLoopDashboardAllowlist(args) {
+  if (args[0] !== "smoke") {
+    return false;
+  }
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--json") {
+      continue;
+    }
+    if (arg === "--host") {
+      const value = args[index + 1];
+      if (!value || !["127.0.0.1", "localhost"].includes(value)) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg === "--port") {
+      const value = args[index + 1];
+      if (!value || !/^\d+$/.test(value) || Number(value) > 65535) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 function matchesReviewerDispatchAllowlist(command, context) {
   return matchesClaudeAcpDispatchAllowlist(command, context) || matchesAgyDispatchAllowlist(command, context);
