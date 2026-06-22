@@ -252,10 +252,22 @@ export interface WorkflowBoardStage {
 export interface WorkflowReviewReportRow {
   id: string;
   agent: string;
+  reviewer?: "claude_acp" | "agy_gemini" | "internal_tester" | "internal_reviewer" | "github" | "human" | "custom";
+  role: string;
   model?: string;
+  backend?: string;
   status: "pass" | "block" | "warn" | "pending" | "skipped" | "unknown";
   prComment: "posted" | "missing" | "not_required" | "unknown";
   severitySummary: string;
+  severityGroups: Array<{
+    id: "p0" | "p1" | "p2" | "p3" | "follow_up";
+    label: string;
+    status: "none" | "present" | "unknown";
+    evidence?: string;
+  }>;
+  resolutionStatus: "fixed" | "routed" | "pending" | "not_applicable" | "unknown";
+  resolutionEvidence: string;
+  followUp?: string;
   requirement?: "required" | "optional" | "not_required" | "unknown";
   progress?: "requested" | "started" | "in_progress" | "incomplete" | "complete" | "skipped" | "unknown";
   result?: "pass" | "block" | "warn" | "unknown";
@@ -265,7 +277,6 @@ export interface WorkflowReviewReportRow {
   conversationId?: string;
   reason?: string;
   nextAction?: string;
-  followUp?: string;
   evidenceRefIds: string[];
 }
 
@@ -338,11 +349,20 @@ export interface WorkflowEvidenceAppendInput {
     progress: "requested" | "started" | "in_progress" | "incomplete" | "complete" | "skipped" | "unknown";
     result: "pass" | "block" | "warn" | "unknown";
     severitySummary: "none" | "p3_only" | "p2_or_higher" | "unknown";
+    role?: string;
     model?: string;
+    backend?: string;
     sessionId?: string;
     conversationId?: string;
     commentUrl?: string;
     commentId?: string;
+    p0?: string;
+    p1?: string;
+    p2?: string;
+    p3?: string;
+    followUp?: string;
+    resolutionStatus?: "fixed" | "routed" | "pending" | "not_applicable" | "unknown";
+    resolutionEvidence?: string;
     reason?: string;
   } | undefined;
 }

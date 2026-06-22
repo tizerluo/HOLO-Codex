@@ -302,9 +302,22 @@ describe("dashboard render", () => {
     board.reviewReports = [{
       id: "review-1",
       agent: "Claude ACP",
+      reviewer: "claude_acp",
+      role: "Code/security review",
+      backend: "Claude local ACP",
       status: "pass",
       prComment: "posted",
       severitySummary: "none",
+      severityGroups: [
+        { id: "p0", label: "P0", status: "none" },
+        { id: "p1", label: "P1", status: "none" },
+        { id: "p2", label: "P2", status: "none" },
+        { id: "p3", label: "P3", status: "present", evidence: "One non-blocking polish finding." },
+        { id: "follow_up", label: "Follow-up", status: "present", evidence: "Open snapshot CI follow-up." }
+      ],
+      resolutionStatus: "fixed",
+      resolutionEvidence: "P1/P2 findings fixed before merge.",
+      followUp: "Open snapshot CI follow-up.",
       requirement: "required",
       progress: "complete",
       result: "pass",
@@ -323,12 +336,24 @@ describe("dashboard render", () => {
       />
     );
 
-    expect(await screen.findByText("Requirement")).toBeTruthy();
+    expect(await screen.findByText("Role / backend")).toBeTruthy();
     expect(screen.getByText("Progress")).toBeTruthy();
     expect(screen.getByText("Result")).toBeTruthy();
+    expect(screen.getByText("Findings")).toBeTruthy();
+    expect(screen.getByText("Fix / routing")).toBeTruthy();
     expect(screen.getByText("Required")).toBeTruthy();
     expect(screen.getByText("Complete")).toBeTruthy();
     expect(screen.getByText("Passed")).toBeTruthy();
+    expect(screen.getByText("Code/security review")).toBeTruthy();
+    expect(screen.getByText("Claude local ACP")).toBeTruthy();
+    expect(screen.getByText("P0")).toBeTruthy();
+    expect(screen.getByText("P1")).toBeTruthy();
+    expect(screen.getByText("P2")).toBeTruthy();
+    expect(screen.getByText("P3")).toBeTruthy();
+    expect(screen.getByText("Follow-up")).toBeTruthy();
+    expect(screen.getByText("Open snapshot CI follow-up.")).toBeTruthy();
+    expect(screen.getByText(/Fixed: P1\/P2 findings fixed before merge/)).toBeTruthy();
+    expect(screen.getByText(/P1\/P2 findings fixed before merge/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Posted" })).toBeTruthy();
     expect(screen.getByText(/session: session-1/)).toBeTruthy();
   });

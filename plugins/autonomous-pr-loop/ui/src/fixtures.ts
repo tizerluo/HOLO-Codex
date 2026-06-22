@@ -906,8 +906,8 @@ function workflowBoardFixture(data: MissionControlData): WorkflowBoard {
       source: fixtureEventStage(event)
     })),
     reviewReports: [
-      { id: "review-claude", agent: "Claude ACP", status: "unknown", prComment: "unknown", severitySummary: "no requirement source", requirement: "unknown", progress: "unknown", result: "unknown", reason: "No required Claude review source in fixture.", evidenceRefIds: [] },
-      { id: "review-agy", agent: "AGY/Gemini", status: "unknown", prComment: "unknown", severitySummary: "no requirement source", requirement: "unknown", progress: "unknown", result: "unknown", reason: "No required AGY/Gemini review source in fixture.", evidenceRefIds: [] }
+      { id: "review-claude", agent: "Claude ACP", reviewer: "claude_acp", role: "Code/security review", status: "unknown", prComment: "unknown", severitySummary: "no requirement source", severityGroups: fixtureSeverityGroups("unknown"), resolutionStatus: "unknown", resolutionEvidence: "No structured review evidence yet.", requirement: "unknown", progress: "unknown", result: "unknown", reason: "No required Claude review source in fixture.", evidenceRefIds: [] },
+      { id: "review-agy", agent: "AGY/Gemini", reviewer: "agy_gemini", role: "UI/multimodal review", status: "unknown", prComment: "unknown", severitySummary: "no requirement source", severityGroups: fixtureSeverityGroups("unknown"), resolutionStatus: "unknown", resolutionEvidence: "No structured review evidence yet.", requirement: "unknown", progress: "unknown", result: "unknown", reason: "No required AGY/Gemini review source in fixture.", evidenceRefIds: [] }
     ],
     verificationChecks: [
       { id: "lint", label: "Lint", status: "unknown", evidence: "no appended evidence", owner: "Codex" },
@@ -926,6 +926,16 @@ function workflowBoardFixture(data: MissionControlData): WorkflowBoard {
     appendEvidenceEnabled: !unsupported && !unknown && Boolean(data.current.run),
     ...(unsupported ? { message: "PR O observes only pr-loop runs." } : unknown ? { message: `Unknown PR loop state: ${state}` } : {})
   };
+}
+
+function fixtureSeverityGroups(status: "none" | "present" | "unknown"): WorkflowBoard["reviewReports"][number]["severityGroups"] {
+  return [
+    { id: "p0", label: "P0", status },
+    { id: "p1", label: "P1", status },
+    { id: "p2", label: "P2", status },
+    { id: "p3", label: "P3", status },
+    { id: "follow_up", label: "Follow-up", status }
+  ];
 }
 
 function fixtureStage(stage: { id: WorkflowStageId; label: string }, index: number, activeStageId: WorkflowStageId, data: MissionControlData): WorkflowBoardStage {

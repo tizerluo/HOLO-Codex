@@ -542,10 +542,10 @@ function evidenceHelpResult(json: boolean): CliResult {
     usage: commandHelpUsage("evidence"),
     stages: WORKFLOW_STAGE_IDS,
     substages,
-    reviewFlags: ["--reviewer", "--requirement", "--progress", "--result", "--severity", "--model", "--session", "--conversation", "--comment-url", "--comment-id", "--reason"]
+    reviewFlags: ["--reviewer", "--requirement", "--progress", "--result", "--severity", "--role", "--model", "--backend", "--session", "--conversation", "--comment-url", "--comment-id", "--p0", "--p1", "--p2", "--p3", "--follow-up", "--resolution", "--resolution-evidence", "--reason"]
   }, [
     "Usage: agent-loop evidence append --stage STAGE --summary \"...\" [--substage ID] [--artifact ID]",
-    "Review evidence: add --stage review --reviewer claude_acp --requirement required --progress started|complete --result pass|block|warn|unknown --severity none|p3_only|p2_or_higher|unknown [--model NAME] [--session ID] [--conversation ID] [--comment-url URL] [--comment-id ID] [--reason TEXT]",
+    "Review evidence: add --stage review --reviewer claude_acp --requirement required --progress started|complete --result pass|block|warn|unknown --severity none|p3_only|p2_or_higher|unknown [--role ROLE] [--model NAME] [--backend NAME] [--p0 TEXT] [--p1 TEXT] [--p2 TEXT] [--p3 TEXT] [--follow-up TEXT] [--resolution fixed|routed|pending|not_applicable|unknown] [--session ID] [--conversation ID] [--comment-url URL] [--comment-id ID] [--reason TEXT]",
     `Stages: ${WORKFLOW_STAGE_IDS.join(", ")}`,
     "Substages:",
     ...substages.map((entry) => `  ${entry.stage}: ${entry.substages.join(", ")}`)
@@ -558,12 +558,21 @@ function reviewEvidenceFromArgs(args: string[]): Record<string, string> | undefi
     ["requirement", "--requirement"],
     ["progress", "--progress"],
     ["result", "--result"],
+    ["role", "--role"],
     ["model", "--model"],
+    ["backend", "--backend"],
     ["sessionId", "--session"],
     ["conversationId", "--conversation"],
     ["commentUrl", "--comment-url"],
     ["commentId", "--comment-id"],
     ["severitySummary", "--severity"],
+    ["p0", "--p0"],
+    ["p1", "--p1"],
+    ["p2", "--p2"],
+    ["p3", "--p3"],
+    ["followUp", "--follow-up"],
+    ["resolutionStatus", "--resolution"],
+    ["resolutionEvidence", "--resolution-evidence"],
     ["reason", "--reason"]
   ];
   const review = Object.fromEntries(pairs.flatMap(([key, flag]) => {

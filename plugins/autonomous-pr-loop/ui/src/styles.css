@@ -669,7 +669,7 @@ button:disabled {
 }
 
 .workflow-matrix__row--review {
-  grid-template-columns: minmax(104px, 0.9fr) minmax(84px, max-content) minmax(92px, max-content) minmax(92px, max-content) minmax(160px, 1.2fr);
+  grid-template-columns: minmax(112px, 0.9fr) minmax(132px, 1fr) minmax(120px, 0.8fr) minmax(92px, max-content) minmax(150px, 1fr) minmax(190px, 1.2fr);
 }
 
 .workflow-matrix__row--header {
@@ -687,6 +687,38 @@ button:disabled {
 
 .workflow-matrix--review .workflow-matrix__row--header span {
   white-space: normal;
+}
+
+.review-finding-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.review-finding {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.review-finding--present {
+  border-color: var(--color-danger-border);
+  color: var(--color-danger-text);
+  background: var(--color-danger-bg);
+}
+
+.review-finding--none {
+  border-color: var(--color-success-border);
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
 }
 
 .workflow-append label {

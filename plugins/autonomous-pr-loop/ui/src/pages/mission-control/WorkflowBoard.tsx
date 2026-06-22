@@ -405,22 +405,41 @@ function ReviewMatrix({ rows, locale }: { rows: WorkflowReviewReportRow[]; local
       <div className="workflow-matrix__rows">
         <div className="workflow-matrix__row workflow-matrix__row--header workflow-matrix__row--review">
           <span>{t(locale, "workflowReviewer")}</span>
-          <span>{t(locale, "workflowRequirement")}</span>
+          <span>{t(locale, "workflowReviewerRole")}</span>
           <span>{t(locale, "workflowProgress")}</span>
           <span>{t(locale, "workflowResult")}</span>
-          <span>{t(locale, "workflowEvidence")}</span>
+          <span>{t(locale, "workflowFindings")}</span>
+          <span>{t(locale, "workflowResolution")}</span>
         </div>
         {rows.map((row) => (
           <div className="workflow-matrix__row workflow-matrix__row--review" key={row.id}>
-            <span>{row.agent}</span>
-            <StatusBadge value={displayValueLabel(locale, row.requirement ?? "unknown")} tone={toneForRequirement(row.requirement ?? "unknown")} />
-            <StatusBadge value={displayValueLabel(locale, row.progress ?? "unknown")} tone={toneForProgress(row.progress ?? "unknown", row.status)} />
+            <span>
+              <strong>{row.agent}</strong>
+              <small>{displayValueLabel(locale, row.requirement ?? "unknown")}</small>
+            </span>
+            <span>
+              <strong>{row.role}</strong>
+              <small>{row.backend ?? row.model ?? t(locale, "none")}</small>
+            </span>
+            <span>
+              <StatusBadge value={displayValueLabel(locale, row.progress ?? "unknown")} tone={toneForProgress(row.progress ?? "unknown", row.status)} />
+              <small>{row.progress === "incomplete" ? row.nextAction ?? row.resolutionEvidence : row.nextAction}</small>
+            </span>
             <span>
               <StatusBadge value={displayValueLabel(locale, row.result ?? row.status)} tone={toneForReview(row.status)} />
               <small>{row.severitySummary}</small>
             </span>
+            <span className="review-finding-list">
+              {row.severityGroups.map((group) => (
+                <span className={`review-finding review-finding--${group.status}`} key={`${row.id}-${group.id}`} title={group.evidence}>
+                  {group.label}
+                </span>
+              ))}
+              {row.followUp ? <small>{row.followUp}</small> : null}
+            </span>
             <span>
               {row.commentUrl ? <a href={row.commentUrl} target="_blank" rel="noopener noreferrer">{displayValueLabel(locale, row.prComment)}</a> : <strong>{displayValueLabel(locale, row.prComment)}</strong>}
+              <small>{displayValueLabel(locale, row.resolutionStatus)}: {row.resolutionEvidence}</small>
               <small>{reviewEvidenceSummary(row, locale)}</small>
             </span>
           </div>
