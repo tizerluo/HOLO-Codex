@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evaluateHookPolicy, evaluatePreToolUseHook, toCodexHookResponse } from "../core/hook-policy.js";
+import { commandFromHookPayload, evaluateHookPolicy, evaluatePreToolUseHook, toCodexHookResponse } from "../core/hook-policy.js";
 import { statePath } from "../core/config.js";
 import { SqliteAgentLoopStorage } from "../core/storage.js";
 import { cleanupTempRepos, tempRepo } from "./helpers.js";
@@ -58,6 +58,17 @@ describe("hook policy", () => {
     }
   });
 
+  it("does not treat structured argv metacharacters as shell control operators", () => {
+    const command = commandFromHookPayload({
+      tool_input: { file: "rg", args: ["-n", "foo|bar", "plugins/autonomous-pr-loop/core"] }
+    });
+
+    expect(command).toMatchObject({ file: "rg", rawKind: "argv" });
+    const decision = evaluateHookPolicy({ repoRoot: "/repo", command: command! });
+
+    expect(decision.allow).toBe(true);
+  });
+
   it("blocks git reset --hard with global -C variants", () => {
     for (const command of [
       { file: "git", args: ["-C", "/repo", "reset", "--hard", "HEAD"] },
@@ -87,8 +98,10 @@ describe("hook policy", () => {
   it("blocks shell compound commands before allowlist matching", () => {
     for (const command of [
       { file: "rg", args: ["foo", "&&", "git", "reset", "--hard"], raw: "rg foo && git reset --hard" },
+      commandFromHookPayload({ tool_input: { command: "rg -n foo | cat" } })!,
       { file: "sh", args: ["-c", "rg foo && git reset --hard"] },
       { file: "bash", args: ["-c", "rg foo || git reset --hard"] },
+      { file: "bash", args: ["-c", "rg foo | cat"], rawKind: "argv" as const },
       { file: "env", args: ["DEBUG=1", "sh", "-c", "rg foo; git reset --hard"] }
     ]) {
       const decision = evaluateHookPolicy({ repoRoot: "/repo", command });

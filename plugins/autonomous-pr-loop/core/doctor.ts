@@ -265,7 +265,8 @@ function checkHooksInstalled(repoRoot: string, pluginRoot: string): DoctorCheck 
       lock,
       hookCapture: capture,
       ...(registryError ? { registryError } : {}),
-      installCommand
+      installCommand,
+      refreshCommand: installCommand
     }
   };
 }

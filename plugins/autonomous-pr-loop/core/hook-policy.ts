@@ -11,6 +11,7 @@ export interface HookCommand {
   file: string;
   args: string[];
   raw?: string;
+  rawKind?: "argv" | "shell";
 }
 
 export interface HookPolicyInput {
@@ -51,7 +52,7 @@ export function commandFromHookPayload(payload: unknown): HookCommand | undefine
   const file = stringValue(toolInput.file ?? toolInput.cmd ?? toolInput.executable);
   const args = Array.isArray(toolInput.args) ? toolInput.args.filter((arg): arg is string => typeof arg === "string") : undefined;
   if (file && args) {
-    return { file: basename(file), args, raw: [file, ...args].join(" ") };
+    return { file: basename(file), args, raw: [file, ...args].join(" "), rawKind: "argv" };
   }
   const command = stringValue(toolInput.command ?? toolInput.cmd ?? toolInput.input);
   if (!command) {
@@ -494,13 +495,17 @@ function shellControlPolicy(command: HookCommand): string | undefined {
   if (isApplyPatchCommand(command)) {
     return undefined;
   }
-  if (command.raw && hasShellControlOperator(command.raw)) {
+  if (command.raw && command.rawKind !== "argv" && hasShellControlOperator(command.raw)) {
     return "shell_control_operator_forbidden";
   }
   if (command.file === "env") {
     const index = command.args.findIndex((arg) => !arg.includes("="));
     if (index >= 0) {
-      return shellControlPolicy({ file: basename(command.args[index] ?? ""), args: command.args.slice(index + 1) });
+      return shellControlPolicy({
+        file: basename(command.args[index] ?? ""),
+        args: command.args.slice(index + 1),
+        ...(command.rawKind ? { rawKind: command.rawKind } : {})
+      });
     }
   }
   if ((command.file === "sh" || command.file === "bash") && command.args[0] === "-c" && command.args[1] && hasShellControlOperator(command.args[1])) {
@@ -542,7 +547,12 @@ function unwrapCommand(command: HookCommand): HookCommand {
   if (command.file === "env") {
     const index = command.args.findIndex((arg) => !arg.includes("="));
     if (index >= 0) {
-      return unwrapCommand({ file: command.args[index] ?? "", args: command.args.slice(index + 1), raw: renderCommand(command) });
+      return unwrapCommand({
+        file: command.args[index] ?? "",
+        args: command.args.slice(index + 1),
+        raw: renderCommand(command),
+        ...(command.rawKind ? { rawKind: command.rawKind } : {})
+      });
     }
   }
   if ((command.file === "sh" || command.file === "bash") && command.args[0] === "-c" && command.args[1]) {
@@ -558,7 +568,7 @@ function renderCommand(command: HookCommand): string {
 function tokenizeCommand(command: string): HookCommand {
   const parts = command.match(/"[^"]*"|'[^']*'|\S+/g)?.map((part) => part.replace(/^["']|["']$/g, "")) ?? [];
   const [file = "", ...args] = parts;
-  return { file: basename(file), args, raw: command };
+  return { file: basename(file), args, raw: command, rawKind: "shell" };
 }
 
 function hasShellControlOperator(value: string): boolean {

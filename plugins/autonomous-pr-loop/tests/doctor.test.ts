@@ -129,7 +129,7 @@ describe("agent-loop CLI", () => {
     const oldCodexHome = process.env.CODEX_HOME;
     process.env.CODEX_HOME = codexHome;
 
-    let payload: { checks: Array<{ name: string; status?: string; message?: string; details?: { unexpectedRouterCommands?: string[]; routerCommandsPointToExpectedDist?: boolean } }> } | undefined;
+    let payload: { checks: Array<{ name: string; status?: string; message?: string; details?: { unexpectedRouterCommands?: string[]; routerCommandsPointToExpectedDist?: boolean; refreshCommand?: string } }> } | undefined;
     try {
       const result = await runAgentLoopCli(["doctor", "--json"], repoRoot);
       payload = JSON.parse(result.stdout);
@@ -142,6 +142,7 @@ describe("agent-loop CLI", () => {
     expect(hookCheck?.message).toContain("outside the expected hook dist");
     expect(hookCheck?.details?.routerCommandsPointToExpectedDist).toBe(false);
     expect(hookCheck?.details?.unexpectedRouterCommands?.[0]).toContain("[redacted]");
+    expect(hookCheck?.details?.refreshCommand).toContain("agent-loop install-hooks --repo");
     expect(JSON.stringify(hookCheck)).not.toContain(legacyToken);
   });
 

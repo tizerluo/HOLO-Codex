@@ -14,7 +14,7 @@ import { commandsReferencingLegacyPrivateRepo, inspectAgentLoopBinary, inspectBu
 import { agentLoopRouterHookEntries, collectHookCommands, isAgentLoopHookCommand, isLegacyAgentLoopHookCommand } from "./hook-installation.js";
 import { hookRegistryPath, inspectHookRegistryLock, listHookBindings, removeHookBinding, upsertHookBinding } from "./hook-router.js";
 import { inspectLocalInstall, installLocalAgentLoop, listLocalInstallSnapshots, pruneLocalInstallSnapshots, rollbackLocalAgentLoop } from "./local-install.js";
-import { defaultPackageRoot, hookSourceRoot } from "./plugin-paths.js";
+import { defaultPackageRoot, hookDistRoot, hookSourceRoot } from "./plugin-paths.js";
 import { resumeStateMachine, runStateMachine, stopStateMachine } from "./state-machine.js";
 import { SqliteAgentLoopStorage } from "./storage.js";
 import { resolveRepoRoot } from "./repo-root.js";
@@ -721,6 +721,10 @@ function hooks(repoRoot: string, args: string[], json: boolean, localeOverride: 
     const report = hookInstallReport(repoRoot, packageRoot);
     return ok(json, { ok: true, ...report }, [
       report.routerInstalled ? "hook router installed" : "hook router missing",
+      `router points to expected dist: ${report.routerCommandsPointToExpectedDist ? "yes" : "no"}`,
+      `unexpected router commands: ${report.unexpectedRouterCommands.length}`,
+      ...report.unexpectedRouterCommands.map((command) => `unexpected router command: ${command}`),
+      `refresh command: ${report.refreshCommand}`,
       `active bindings: ${report.activeBindings}`,
       `legacy entries: ${report.legacyCommands.length}`,
       `old private repo hook refs: ${report.legacyPrivateRepoCommands.length}`,
@@ -1203,11 +1207,16 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   missingRouterEvents: string[];
   legacyCommands: string[];
   legacyPrivateRepoCommands: string[];
+  expectedDist: string;
+  routerCommandsPointToExpectedDist: boolean;
+  unexpectedRouterCommands: string[];
   bundledHooksConfig: BundledHooksConfigInspection;
   agentLoopBinary: AgentLoopBinaryInspection;
   activeBindings: number;
   currentRepoBindings: number;
   lock: ReturnType<typeof inspectHookRegistryLock>;
+  installCommand: string;
+  refreshCommand: string;
   hooksJsonError?: string;
   registryError?: string;
   hookCapture: ReturnType<typeof inspectHookCapture>;
@@ -1224,6 +1233,11 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   }
   const commands = collectHookCommands(existing);
   const routerEntries = agentLoopRouterHookEntries(packageRoot);
+  const expectedDist = hookDistRoot(packageRoot);
+  const routerCommands = commands.filter((command) => command.includes("autonomous-pr-loop/hooks/dist/"));
+  const unexpectedRouterCommands = routerCommands
+    .filter((command) => !command.includes(expectedDist))
+    .map(redactDiagnosticText);
   const missingRouterEvents = Object.entries(routerEntries)
     .filter(([, entries]) => !entries.some((entry) => hookCommands(entry).every((command) => commands.includes(command))))
     .map(([event]) => event);
@@ -1243,6 +1257,7 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   const currentRepoBindings = bindings.filter((binding) => binding.status === "active" && binding.repoRoot === repoRoot).length;
   const lock = inspectHookRegistryLock(codexHome);
   const hookCapture = inspectHookCapture(repoRoot, codexHome);
+  const refreshCommand = `agent-loop install-hooks --repo ${quoteCliArg(repoRoot)}`;
   return {
     hooksPath,
     registryPath: hookRegistryPath(codexHome),
@@ -1250,15 +1265,24 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
     missingRouterEvents,
     legacyCommands,
     legacyPrivateRepoCommands,
+    expectedDist,
+    routerCommandsPointToExpectedDist: routerCommands.length > 0 && unexpectedRouterCommands.length === 0,
+    unexpectedRouterCommands,
     bundledHooksConfig,
     agentLoopBinary,
     activeBindings,
     currentRepoBindings,
     lock,
     hookCapture,
+    installCommand: refreshCommand,
+    refreshCommand,
     ...(hooksJsonError ? { hooksJsonError } : {}),
     ...(registryError ? { registryError } : {})
   };
+}
+
+function quoteCliArg(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function normalizeHookEntries(value: unknown): unknown[] {

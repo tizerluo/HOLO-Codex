@@ -1378,15 +1378,24 @@ exit 0
     process.env.CODEX_HOME = codexHome;
     process.env.PATH = `${fakeBinDir}:${oldPath ?? ""}`;
 
+    const hooksPath = join(codexHome, "hooks.json");
+    const beforeHooks = readFileSync(hooksPath, "utf8");
     let payload: {
       bundledHooksConfig: { valid: boolean };
       legacyPrivateRepoCommands: string[];
       agentLoopBinary: { legacyPrivateRepoReferences: string[] };
+      expectedDist: string;
+      routerCommandsPointToExpectedDist: boolean;
+      unexpectedRouterCommands: string[];
+      refreshCommand: string;
+      installCommand: string;
     };
     let human: string;
+    let afterHooks: string;
     try {
       payload = JSON.parse((await runAgentLoopCli(["hooks", "doctor", "--repo", repoRoot, "--json"], repoRoot)).stdout);
       human = (await runAgentLoopCli(["hooks", "doctor", "--repo", repoRoot], repoRoot)).stdout;
+      afterHooks = readFileSync(hooksPath, "utf8");
     } finally {
       process.env.CODEX_HOME = oldCodexHome;
       process.env.PATH = oldPath;
@@ -1397,8 +1406,19 @@ exit 0
     expect(payload.legacyPrivateRepoCommands[0]).toContain("<legacy-private-repo-path>");
     expect(payload.legacyPrivateRepoCommands[0]).not.toContain("/Users/mac-mini");
     expect(payload.agentLoopBinary.legacyPrivateRepoReferences).toEqual(expect.any(Array));
+    expect(payload.expectedDist).toContain("autonomous-pr-loop/hooks/dist");
+    expect(payload.routerCommandsPointToExpectedDist).toBe(false);
+    expect(payload.unexpectedRouterCommands).toHaveLength(1);
+    expect(payload.refreshCommand).toBe(`agent-loop install-hooks --repo '${realpathSync(repoRoot)}'`);
+    expect(payload.installCommand).toBe(payload.refreshCommand);
     expect(human).toContain("bundled hooks config: valid");
+    expect(human).toContain("router points to expected dist: no");
+    expect(human).toContain("unexpected router commands: 1");
+    expect(human).toContain("unexpected router command: node '<legacy-private-repo-path>'");
+    expect(human).not.toContain("/Users/mac-mini");
+    expect(human).toContain(`refresh command: agent-loop install-hooks --repo '${realpathSync(repoRoot)}'`);
     expect(human).toContain("old private repo hook refs: 1");
+    expect(afterHooks!).toBe(beforeHooks);
   });
 
   it("hooks doctor reports whether hook capture has been observed", async () => {
