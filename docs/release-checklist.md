@@ -70,12 +70,14 @@ For `v0.1.2` and later, prefer the manual Release workflow:
 3. Inspect the dry-run artifact and logs.
 4. Re-run with `dry_run: false` to publish with npm provenance and create the GitHub Release.
 
-The workflow uses GitHub OIDC (`id-token: write`) instead of a long-lived npm token. It runs on Node 24 and installs npm `^11.5.1` in both validation and publish jobs, satisfying the npm Trusted Publishing floor of Node 22.14.0+ and npm 11.5.1+.
+The workflow prefers GitHub OIDC (`id-token: write`) for Trusted Publishing. If the repository secret `NPM_TOKEN` is configured, the publish step uses that granular token as an explicit fallback while npm Trusted Publisher setup is unavailable. The token must be package-scoped to `holo-codex`, read/write, and created with 2FA bypass enabled.
+
+The workflow runs on Node 24 and installs npm `^11.5.1` in both validation and publish jobs, satisfying the npm Trusted Publishing floor of Node 22.14.0+ and npm 11.5.1+.
 Dry runs may use an already-published version to test the workflow shape; real releases fail if the npm version or Git tag already exists.
 Dry runs validate inputs, run the stable Vitest suite, pack the tarball, verify hook schema, smoke the packed tarball, and upload the release candidate. The workflow checks existing npm versions through retried registry HTTP status codes instead of parsing npm CLI error text. The publish job re-verifies the downloaded tarball integrity against `holo-pack.json` before `npm publish`.
 Dry runs do not execute `npm publish`, so the first `dry_run: false` run is the first real Trusted Publishing/OIDC validation.
 After a real publish, the workflow creates the Git tag and GitHub Release before the registry install smoke. That keeps the release recoverable even if npm registry propagation makes the smoke temporarily fail.
-The manual fallback below is intentionally separate from Trusted Publishing. It may not create provenance unless npm supports it in the local environment and the maintainer explicitly chooses that path.
+The manual fallback below is intentionally separate from Trusted Publishing and the `NPM_TOKEN` workflow fallback. It may not create provenance unless npm supports it in the local environment and the maintainer explicitly chooses that path.
 
 ### Manual fallback
 
