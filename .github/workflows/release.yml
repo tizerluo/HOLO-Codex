@@ -85,6 +85,24 @@ jobs:
             echo "package.json version $package_version does not match workflow input $VERSION" >&2
             exit 1
           fi
+          node - <<'NODE'
+          const fs = require("fs");
+          const version = process.env.VERSION;
+          const checks = [
+            ["package.json", JSON.parse(fs.readFileSync("package.json", "utf8")).version],
+            ["plugins/autonomous-pr-loop/package.json", JSON.parse(fs.readFileSync("plugins/autonomous-pr-loop/package.json", "utf8")).version],
+            ["plugins/autonomous-pr-loop/.codex-plugin/plugin.json", JSON.parse(fs.readFileSync("plugins/autonomous-pr-loop/.codex-plugin/plugin.json", "utf8")).version]
+          ];
+          const mcpSource = fs.readFileSync("plugins/autonomous-pr-loop/mcp-server/src/index.ts", "utf8");
+          checks.push(["plugins/autonomous-pr-loop/mcp-server/src/index.ts serverInfo", mcpSource.includes(`serverInfo: { name: "autonomous-pr-loop", version: "${version}" }`) ? version : "missing"]);
+          const mcpDist = fs.readFileSync("plugins/autonomous-pr-loop/mcp-server/dist/index.js", "utf8");
+          checks.push(["plugins/autonomous-pr-loop/mcp-server/dist/index.js serverInfo", mcpDist.includes(`serverInfo: { name: "autonomous-pr-loop", version: "${version}" }`) ? version : "missing"]);
+          const mismatches = checks.filter(([, actual]) => actual !== version);
+          if (mismatches.length) {
+            console.error(JSON.stringify({ version, mismatches }, null, 2));
+            process.exit(1);
+          }
+          NODE
           if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "Tag must look like v<semver>. Got: $tag" >&2
             exit 1

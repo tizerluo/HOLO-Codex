@@ -1,6 +1,6 @@
 # HOLO-Codex npm Release Checklist
 
-Use this checklist for npm releases such as `v0.1.1`. Replace `VERSION` with the package version being released.
+Use this checklist for npm releases such as `v0.1.2`. Replace `VERSION` with the package version being released.
 
 The public source release remains available at `https://github.com/tizerluo/HOLO-Codex`. The npm package is `holo-codex` and installs the stable `agent-loop` CLI. Compatibility identifiers remain unchanged: `agent-loop`, `.agent-loop/`, `autonomous-pr-loop`, and `plugins/autonomous-pr-loop/`.
 
@@ -155,7 +155,7 @@ Expected result: hooks and binding registry restore from the snapshot, non-agent
 After publish and post-publish smoke pass:
 
 ```bash
-VERSION=0.1.1
+VERSION=0.1.2
 git tag "v$VERSION"
 git push origin "v$VERSION"
 gh release create "v$VERSION" \
