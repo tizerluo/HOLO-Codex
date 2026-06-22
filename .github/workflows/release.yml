@@ -316,7 +316,7 @@ jobs:
             cat /tmp/npm-version.json >&2
             exit 1
           fi
-          npm publish "release-candidate/$TGZ" --access public --provenance
+          npm publish "./release-candidate/$TGZ" --access public --provenance
 
       - name: Create tag and GitHub Release
         env:
