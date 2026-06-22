@@ -523,6 +523,106 @@ describe("dashboard API", () => {
     expect(mission.data.mergeReadiness?.evidence).toContain("cleanup evidence recorded after merge");
   });
 
+  it("does not mark every cleanup substage done from aggregate cleanup evidence", async () => {
+    const repoRoot = boundWorkflowRepo("SELECT_NEXT_PR");
+    const storage = new SqliteAgentLoopStorage(join(repoRoot, ".agent-loop", "state.sqlite"));
+    const run = storage.getCurrentRun();
+    if (!run) throw new Error("missing bound run");
+    appendStageEvidence(storage, run.id, "cleanup", "Cleanup stage reached.");
+    storage.close();
+    const server = await startDashboardServer({ repoRoot, token: "test-token", serveUi: false });
+    handles.push(server);
+
+    const board = await (await fetch(`${base(server)}/api/workflow-board`)).json() as {
+      data: {
+        activeStageId: string;
+        stages: Array<{ id: string; status: string; substages: Array<{ id: string; status: string; evidenceCounts: { events: number } }> }>;
+        cleanupChecks: Array<{ id: string; status: string; evidence: string }>;
+      };
+    };
+    const cleanupStage = board.data.stages.find((stage) => stage.id === "cleanup");
+    const cleanupSubstage = (id: string): string | undefined => cleanupStage?.substages.find((substage) => substage.id === id)?.status;
+    const cleanupCheck = (id: string): string | undefined => board.data.cleanupChecks.find((check) => check.id === id)?.status;
+
+    expect(board.data.activeStageId).toBe("cleanup");
+    expect(cleanupSubstage("switched_main")).toBe("pending");
+    expect(cleanupCheck("switched_main")).toBe("pending");
+    expect(cleanupSubstage("pulled_latest")).toBe("pending");
+    expect(cleanupCheck("pulled_latest")).toBe("pending");
+    expect(cleanupSubstage("worktree_clean")).toBe("done");
+    expect(cleanupCheck("worktree_clean")).toBe("passed");
+  });
+
+  it("keeps missing cleanup substages pending when only part of cleanup has evidence", async () => {
+    const repoRoot = boundWorkflowRepo("SELECT_NEXT_PR");
+    const storage = new SqliteAgentLoopStorage(join(repoRoot, ".agent-loop", "state.sqlite"));
+    const run = storage.getCurrentRun();
+    if (!run) throw new Error("missing bound run");
+    appendStageEvidence(storage, run.id, "cleanup", "PR was merged.", "pr_merged");
+    appendStageEvidence(storage, run.id, "cleanup", "Switched to main.", "switched_main");
+    storage.close();
+    const server = await startDashboardServer({ repoRoot, token: "test-token", serveUi: false });
+    handles.push(server);
+
+    const board = await (await fetch(`${base(server)}/api/workflow-board`)).json() as {
+      data: {
+        stages: Array<{ id: string; substages: Array<{ id: string; status: string }> }>;
+        cleanupChecks: Array<{ id: string; status: string }>;
+      };
+    };
+    const cleanupStage = board.data.stages.find((stage) => stage.id === "cleanup");
+    const substageStatus = (id: string): string | undefined => cleanupStage?.substages.find((substage) => substage.id === id)?.status;
+    const checkStatus = (id: string): string | undefined => board.data.cleanupChecks.find((check) => check.id === id)?.status;
+
+    expect(substageStatus("pr_merged")).toBe("done");
+    expect(checkStatus("pr_merged")).toBe("passed");
+    expect(substageStatus("switched_main")).toBe("done");
+    expect(checkStatus("switched_main")).toBe("passed");
+    expect(substageStatus("pulled_latest")).toBe("pending");
+    expect(checkStatus("pulled_latest")).toBe("pending");
+    expect(substageStatus("next_issue_selected")).toBe("pending");
+    expect(checkStatus("next_issue_selected")).toBe("pending");
+    expect(substageStatus("worktree_clean")).toBe("done");
+    expect(checkStatus("worktree_clean")).toBe("passed");
+  });
+
+  it("keeps cleanup checklist and substages aligned for explicit substage evidence", async () => {
+    const repoRoot = boundWorkflowRepo("SELECT_NEXT_PR");
+    const storage = new SqliteAgentLoopStorage(join(repoRoot, ".agent-loop", "state.sqlite"));
+    const run = storage.getCurrentRun();
+    if (!run) throw new Error("missing bound run");
+    const cleanupSubstages = [
+      ["pr_merged", "PR was merged."],
+      ["switched_main", "Switched to main."],
+      ["pulled_latest", "Pulled latest main."],
+      ["gitnexus_reindexed", "GitNexus was reindexed."],
+      ["worktree_clean", "Worktree is clean."],
+      ["next_issue_selected", "Next issue selected."]
+    ] as const;
+    for (const [substageId, summary] of cleanupSubstages) {
+      appendStageEvidence(storage, run.id, "cleanup", summary, substageId);
+    }
+    storage.close();
+    const server = await startDashboardServer({ repoRoot, token: "test-token", serveUi: false });
+    handles.push(server);
+
+    const board = await (await fetch(`${base(server)}/api/workflow-board`)).json() as {
+      data: {
+        stages: Array<{ id: string; substages: Array<{ id: string; status: string; evidenceCounts: { events: number } }> }>;
+        cleanupChecks: Array<{ id: string; status: string; evidence: string }>;
+      };
+    };
+    const cleanupStage = board.data.stages.find((stage) => stage.id === "cleanup");
+    const checklistIds = board.data.cleanupChecks.map((check) => check.id);
+
+    expect(checklistIds).toEqual(cleanupSubstages.map(([substageId]) => substageId));
+    expect(board.data.cleanupChecks.every((check) => check.status === "passed")).toBe(true);
+    expect(cleanupStage?.substages.map((substage) => [substage.id, substage.status, substage.evidenceCounts.events])).toEqual(
+      cleanupSubstages.map(([substageId]) => [substageId, "done", 1])
+    );
+    expect(board.data.cleanupChecks.find((check) => check.id === "next_issue_selected")?.evidence).toBe("Next issue selected.");
+  });
+
   it("keeps a stale selected-work-item state on review when review is the furthest evidence", async () => {
     const repoRoot = boundWorkflowRepo("SELECT_NEXT_PR");
     const storage = new SqliteAgentLoopStorage(join(repoRoot, ".agent-loop", "state.sqlite"));

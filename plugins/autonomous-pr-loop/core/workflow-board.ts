@@ -771,13 +771,15 @@ function buildStage(input: {
     status,
     actorChips: actorChipsForStage(input.definition.id, status, input.profileRoleMapping, input.stageMetadata),
     evidenceCounts: counts,
-    substages: input.definition.substages.map((substage, substageIndex) => ({
-      ...substage,
-      status: substageIndex === 0 && status === "active" ? "active" : status === "done" ? "done" : "pending",
-      evidenceCounts: counts,
-      latestEvidence: stageEvidence.slice(0, 3),
-      requiredEvidence: []
-    })),
+    substages: input.definition.id === "cleanup"
+      ? cleanupSubstages(input.definition, input.input, input.evidenceRefs, status)
+      : input.definition.substages.map((substage, substageIndex) => ({
+        ...substage,
+        status: substageIndex === 0 && status === "active" ? "active" : status === "done" ? "done" : "pending",
+        evidenceCounts: counts,
+        latestEvidence: stageEvidence.slice(0, 3),
+        requiredEvidence: []
+      })),
     latestAction: { label: status === "blocked" ? "Resolve blocker" : input.definition.nextAction, safeToRunFromDashboard: false, requiresConfirmation: false },
     blockers: [],
     nextAction: input.definition.nextAction
@@ -1343,14 +1345,36 @@ function satisfiedReviewEvidence(events: AgentLoopEvent[]): string | undefined {
 }
 
 function cleanupRows(input: WorkflowBoardInput): WorkflowCheckRow[] {
+  return cleanupSubstageRows(input);
+}
+
+function cleanupSubstages(
+  definition: (typeof WORKFLOW_STAGE_DEFINITIONS)[number],
+  input: WorkflowBoardInput,
+  refs: WorkflowEvidenceRef[],
+  stageStatus: WorkflowStageStatus
+): WorkflowBoardSubstage[] {
+  const rows = cleanupSubstageRows(input);
+  const firstIncompleteIndex = rows.findIndex((row) => row.status !== "passed" && row.status !== "skipped");
+  return definition.substages.map((substage, index) => {
+    const row = rows.find((item) => item.id === substage.id);
+    const latestEvidence = cleanupEvidenceRefs(input.events, refs, substage.id);
+    return {
+      ...substage,
+      status: row ? cleanupSubstageStatus(row, stageStatus, index === firstIncompleteIndex) : "pending",
+      evidenceCounts: evidenceCounts(latestEvidence),
+      latestEvidence,
+      requiredEvidence: []
+    };
+  });
+}
+
+function cleanupSubstageRows(input: WorkflowBoardInput): WorkflowCheckRow[] {
   const evidence = cleanupEvidenceBySubstage(input.events);
-  return [
-    cleanupCheck("pr_merged", "PR merged", "GitHub", evidence, input.pr?.state === "MERGED", input.pr?.state ?? "no PR link"),
-    cleanupCheck("switched_main", "Switched to main", "Codex", evidence),
-    cleanupCheck("pulled_latest", "Pulled latest", "Codex", evidence),
-    cleanupCheck("gitnexus_reindexed", "GitNexus index rebuilt", "GitNexus", evidence),
-    cleanupCheck("worktree_clean", "Worktree clean", "Codex", evidence, input.run?.worktreeClean === true, String(input.run?.worktreeClean ?? "unknown"))
-  ];
+  return cleanupDefinition().substages.map((substage) => {
+    const fallback = cleanupFallback(input, substage.id);
+    return cleanupCheck(substage.id, substage.label, cleanupOwner(substage.id), evidence, fallback.passed, fallback.evidence);
+  });
 }
 
 function cleanupCheck(
@@ -1366,6 +1390,46 @@ function cleanupCheck(
     return { id, label, status: "passed", evidence: event.message, owner };
   }
   return { id, label, status: fallbackPassed ? "passed" : "pending", evidence: fallbackEvidence, owner };
+}
+
+function cleanupSubstageStatus(row: WorkflowCheckRow, stageStatus: WorkflowStageStatus, isFirstIncomplete: boolean): WorkflowStageStatus {
+  if (row.status === "passed") return "done";
+  if (row.status === "failed") return "failed";
+  if (row.status === "blocked") return "blocked";
+  if (row.status === "skipped") return "skipped";
+  if (stageStatus === "active" && isFirstIncomplete) return "active";
+  return "pending";
+}
+
+function cleanupFallback(input: WorkflowBoardInput, substageId: string): { passed: boolean; evidence: string } {
+  if (substageId === "pr_merged") {
+    return { passed: input.pr?.state === "MERGED", evidence: input.pr?.state ?? "no PR link" };
+  }
+  if (substageId === "worktree_clean") {
+    return { passed: input.run?.worktreeClean === true, evidence: String(input.run?.worktreeClean ?? "unknown") };
+  }
+  return { passed: false, evidence: "no appended evidence" };
+}
+
+function cleanupOwner(substageId: string): string {
+  if (substageId === "pr_merged") return "GitHub";
+  if (substageId === "gitnexus_reindexed") return "GitNexus";
+  return "Codex";
+}
+
+function cleanupEvidenceRefs(events: AgentLoopEvent[], refs: WorkflowEvidenceRef[], substageId: string): WorkflowEvidenceRef[] {
+  const eventIds = new Set(events
+    .filter((event) => event.kind === WORKFLOW_EVIDENCE_KIND && payloadStage(event) === "cleanup" && payloadString(event, "substageId") === substageId)
+    .map((event) => event.id));
+  return refs.filter((ref) => eventIds.has(ref.id)).slice(0, 3);
+}
+
+function cleanupDefinition(): (typeof WORKFLOW_STAGE_DEFINITIONS)[number] {
+  const definition = STAGE_BY_ID.get("cleanup");
+  if (!definition) {
+    throw new AgentLoopError("invalid_config", "cleanup workflow stage definition is missing.");
+  }
+  return definition;
 }
 
 function cleanupEvidenceBySubstage(events: AgentLoopEvent[]): Map<string, AgentLoopEvent> {
