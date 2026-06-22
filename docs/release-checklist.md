@@ -155,7 +155,7 @@ Expected result: hooks and binding registry restore from the snapshot, non-agent
 After publish and post-publish smoke pass:
 
 ```bash
-VERSION=0.1.1
+VERSION=0.1.2
 git tag "v$VERSION"
 git push origin "v$VERSION"
 gh release create "v$VERSION" \
