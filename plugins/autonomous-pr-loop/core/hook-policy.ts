@@ -419,7 +419,8 @@ function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContex
     matchesLocalInspectionAllowlist(command, context) ||
     matchesStructuredInspectionAllowlist(command, context) ||
     matchesToolDiscoveryAllowlist(command) ||
-    matchesClaudeHelpAllowlist(command)
+    matchesClaudeHelpAllowlist(command) ||
+    matchesSafeTempMkdirAllowlist(command)
   ) {
     return true;
   }
@@ -596,11 +597,21 @@ function isTrustedSkillPath(value: string): boolean {
 
 function isSafeReleaseSmokeReadPath(value: string, context: HookAllowlistContext): boolean {
   const normalized = value.replaceAll("\\", "/");
+  if (normalized.split(/[\\/]/).includes("..")) {
+    return false;
+  }
   if (normalized === context.repoRoot || normalized.startsWith(`${context.repoRoot}/`)) {
     return false;
   }
   return normalized.startsWith("/tmp/holo-") ||
     /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(normalized);
+}
+
+function matchesSafeTempMkdirAllowlist(command: HookCommand): boolean {
+  return command.file === "mkdir" &&
+    command.args.length === 2 &&
+    command.args[0] === "-p" &&
+    isSafeTempPath(command.args[1] ?? "");
 }
 
 function matchesSedReadAllowlist(args: string[]): boolean {
@@ -1028,6 +1039,9 @@ function matchesNpmInstallAllowlist(args: string[]): boolean {
 }
 
 function isSafeTempPath(value: string): boolean {
+  if (value.split(/[\\/]/).includes("..")) {
+    return false;
+  }
   return /^\/tmp\/holo-[^/]+(?:\/|$)/.test(value) ||
     /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(value);
 }

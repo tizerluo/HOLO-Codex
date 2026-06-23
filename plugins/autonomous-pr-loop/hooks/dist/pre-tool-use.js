@@ -3416,7 +3416,7 @@ function protectedPathPolicy(command, protectedPaths) {
 }
 function matchesHookAllowlist(command, context) {
   const args = stripGitGlobalOptions(command.args);
-  if (isApplyPatchCommand(command) || matchesLocalInspectionAllowlist(command, context) || matchesStructuredInspectionAllowlist(command, context) || matchesToolDiscoveryAllowlist(command) || matchesClaudeHelpAllowlist(command)) {
+  if (isApplyPatchCommand(command) || matchesLocalInspectionAllowlist(command, context) || matchesStructuredInspectionAllowlist(command, context) || matchesToolDiscoveryAllowlist(command) || matchesClaudeHelpAllowlist(command) || matchesSafeTempMkdirAllowlist(command)) {
     return true;
   }
   if (command.file === "git") {
@@ -3539,10 +3539,16 @@ function isTrustedSkillPath(value) {
 }
 function isSafeReleaseSmokeReadPath(value, context) {
   const normalized = value.replaceAll("\\", "/");
+  if (normalized.split(/[\\/]/).includes("..")) {
+    return false;
+  }
   if (normalized === context.repoRoot || normalized.startsWith(`${context.repoRoot}/`)) {
     return false;
   }
   return normalized.startsWith("/tmp/holo-") || /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(normalized);
+}
+function matchesSafeTempMkdirAllowlist(command) {
+  return command.file === "mkdir" && command.args.length === 2 && command.args[0] === "-p" && isSafeTempPath(command.args[1] ?? "");
 }
 function matchesSedReadAllowlist(args) {
   if (args.some((arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place" || arg.startsWith("--in-place="))) {
@@ -3877,6 +3883,9 @@ function matchesNpmInstallAllowlist(args) {
   return Boolean(prefix) && flagValues(args, "--prefix").length === 1 && isSafeTempPath(prefix ?? "") && specs.length >= 1 && specs.every(isSafeNpmInstallSpec) && hasExactIgnoreScripts(args);
 }
 function isSafeTempPath(value) {
+  if (value.split(/[\\/]/).includes("..")) {
+    return false;
+  }
   return /^\/tmp\/holo-[^/]+(?:\/|$)/.test(value) || /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(value);
 }
 function hasExactIgnoreScripts(args) {
