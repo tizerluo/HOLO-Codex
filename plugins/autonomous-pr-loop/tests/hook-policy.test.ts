@@ -86,13 +86,27 @@ describe("hook policy", () => {
   it("allows normal delivery workflow commands", () => {
     for (const command of [
       { file: "sed", args: ["-n", "1,220p", "plugins/autonomous-pr-loop/core/hook-policy.ts"] },
+      { file: "sed", args: ["-n", "1,220p", `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/SKILL.md`] },
       { file: "head", args: ["-n", "20", "package.json"] },
+      { file: "head", args: ["-n", "20", `${trustedSkillHome}/.agents/skills/pr-delivery-loop/SKILL.md`] },
       { file: "tail", args: ["-n", "20", "package.json"] },
       { file: "cat", args: ["package.json"] },
+      { file: "cat", args: [`${trustedSkillHome}/.codex/skills/dispatch-claude-acp/references/review.md`] },
       { file: "wc", args: ["-l", "package.json"] },
+      { file: "wc", args: ["-l", `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/SKILL.md`] },
       { file: "find", args: [".", "-maxdepth", "2", "-type", "f", "-name", "*.ts", "-print"] },
+      { file: "find", args: [`${trustedSkillHome}/.codex/skills/dispatch-claude-acp`, "-maxdepth", "2", "-type", "f", "-print"] },
+      { file: "rg", args: ["claude", `${trustedSkillHome}/.codex/skills/dispatch-claude-acp`] },
+      { file: "which", args: ["claude"] },
+      { file: "command", args: ["-v", "claude"] },
+      { file: "which", args: ["agy"] },
+      { file: "command", args: ["-v", "agent-loop"] },
+      { file: "claude", args: ["--help"] },
+      { file: "claude", args: ["acp", "--help"] },
       { file: "jq", args: [".version", "package.json"] },
       { file: "python", args: ["-m", "json.tool", "package.json"] },
+      { file: "cat", args: ["/tmp/holo-smoke/node_modules/holo-codex/package.json"] },
+      { file: "wc", args: ["-l", "/var/folders/abc/def/T/holo-smoke/package.json"] },
       { file: "git", args: ["remote", "-v"] },
       { file: "git", args: ["-C", "/repo", "status"] },
       { file: "git", args: ["branch", "-vv"] },
@@ -119,9 +133,14 @@ describe("hook policy", () => {
       { file: "npm", args: ["ping", "--json"] },
       { file: "npm", args: ["view", "holo-codex", "version", "--json"] },
       { file: "npm", args: ["pack", "--ignore-scripts", "--dry-run", "--json"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination", "/tmp/holo-pack"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination=/var/folders/abc/def/T/holo-pack"] },
       { file: "npm", args: ["install", "--prefix", "/tmp/holo-smoke", "--ignore-scripts", "./holo-codex.tgz"] },
       { file: "pnpm", args: ["agent-loop", "install-hooks", "--repo", "/repo", "--json"] },
       { file: "pnpm", args: ["agent-loop", "hooks", "bind", "--repo", "/repo"] },
+      { file: "pnpm", args: ["agent-loop", "evidence", "--help"] },
+      { file: "pnpm", args: ["agent-loop", "maintainer-override", "--help"] },
+      { file: "agent-loop", args: ["delivery", "--help"] },
       { file: "pnpm", args: ["agent-loop", "dashboard", "smoke", "--host", "127.0.0.1", "--port", "0", "--json"] },
       { file: "pnpm", args: ["agent-loop", "release", "doctor", "--version", "0.1.2", "--tag", "v0.1.2", "--json"] },
       { file: "pnpm", args: ["agent-loop", "release", "doctor", "--help"] },
@@ -131,8 +150,18 @@ describe("hook policy", () => {
       { file: "pnpm", args: ["agent-loop", "recover", "--json"] },
       {
         file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
+        args: ["--help"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --help`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
         args: ["--cwd", "/repo", "--mode", "plan", "--permission", "reject", "--prompt", "Review"],
         raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --prompt Review`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
+        args: ["--help"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --help`
       },
       {
         file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
@@ -228,8 +257,42 @@ describe("hook policy", () => {
       { file: "npm", args: ["install", "--prefix", "/tmp/holo-smoke", "--ignore-scripts", "./package-dir"] },
       { file: "npm", args: ["view", "holo-codex", "--registry=https://example.com"] },
       { file: "npm", args: ["pack", "--ignore-scripts", "--dry-run", "--json", "--registry=https://example.com"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json"] },
+      { file: "npm", args: ["pack", "--ignore-scripts=false", "--json", "--pack-destination", "/tmp/holo-pack"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--no-ignore-scripts", "--json", "--pack-destination", "/tmp/holo-pack"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--no-ignore-scripts=true", "--json", "--pack-destination", "/tmp/holo-pack"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination", "/tmp/holo-pack", "--cache=/Users/mac-mini/tmp-cache"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination", "/tmp/holo-pack", "--script-shell", "bash"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination", "/tmp/not-holo-pack"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination", "/Users/test/out"] },
+      { file: "npm", args: ["pack", "--ignore-scripts", "--json", "--pack-destination", "/tmp/holo-pack", "left-pad"] },
+      { file: "npm", args: ["install", "--prefix", "/tmp/holo-smoke", "--ignore-scripts=false", "./holo-codex.tgz"] },
+      { file: "npm", args: ["install", "--prefix", "/tmp/holo-smoke", "--ignore-scripts", "--no-ignore-scripts", "./holo-codex.tgz"] },
+      { file: "npm", args: ["install", "--prefix", "/tmp/holo-smoke", "--ignore-scripts", "--no-ignore-scripts=false", "./holo-codex.tgz"] },
+      { file: "npm", args: ["install", "--prefix", "/tmp/holo-smoke", "--ignore-scripts", "--cache=/Users/mac-mini/tmp-cache", "./holo-codex.tgz"] },
       { file: "sed", args: ["-i", "s/a/b/", "file.txt"] },
       { file: "cat", args: ["~/.ssh/id_rsa"] },
+      { file: "cat", args: [`${trustedSkillHome}/.config/gh/hosts.yml`] },
+      { file: "cat", args: ["/Users/test/tmp/holo-smoke/secret.txt"] },
+      { file: "sed", args: ["-n", "1,20p", `${trustedSkillHome}/.ssh/config`] },
+      { file: "find", args: [`${trustedSkillHome}/.codex/skills/dispatch-claude-acp`, "-exec", "cat", "{}", ";"] },
+      { file: "rg", args: ["--follow", "secret", `${trustedSkillHome}/.codex/skills/dispatch-claude-acp`] },
+      { file: "rg", args: ["-L", "secret", `${trustedSkillHome}/.codex/skills/dispatch-claude-acp`] },
+      { file: "rg", args: ["--file=/Users/mac-mini/.ssh/config", "foo"] },
+      { file: "rg", args: ["-f", "/Users/mac-mini/.ssh/config", "foo"] },
+      { file: "rg", args: ["-f/Users/mac-mini/.ssh/config", "foo"] },
+      { file: "rg", args: ["--files-from=/Users/mac-mini/.ssh/config", "foo"] },
+      { file: "rg", args: ["--glob-from=/Users/mac-mini/.ssh/config", "foo"] },
+      { file: "rg", args: ["--ignore-file=/Users/mac-mini/.ssh/config", "foo"] },
+      { file: "jq", args: ["--from-file=/Users/mac-mini/.ssh/config", "package.json"] },
+      { file: "jq", args: ["--from-file", "/Users/mac-mini/.ssh/config", "package.json"] },
+      { file: "jq", args: ["-f", "/Users/mac-mini/.ssh/config", "package.json"] },
+      { file: "jq", args: ["-L", "/Users/mac-mini/.ssh", ".", "package.json"] },
+      { file: "which", args: ["rm"] },
+      { file: "command", args: ["-v", "sh"] },
+      { file: "claude", args: ["-p", "Review this PR"] },
+      { file: "claude", args: ["acp", "review"] },
+      { file: "claude", args: ["--permission", "allow-once"] },
       { file: "jq", args: [".", "/Users/mac-mini/.config/gh/hosts.yml"] },
       { file: "find", args: [".", "-delete"] },
       { file: "find", args: ["/Users/mac-mini", "-name", ".env", "-print"] },
@@ -240,6 +303,16 @@ describe("hook policy", () => {
         file: "/Users/test/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs",
         args: ["--cwd", "/repo", "--mode", "auto", "--permission", "allow-once", "--prompt", "Fix"],
         raw: "/Users/test/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode auto --permission allow-once --prompt Fix"
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--mode", "plan", "--permission", "reject", "--agentCommand", "bash", "--prompt", "Review"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --agentCommand bash --prompt Review`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--mode", "plan", "--permission", "reject", "--logJsonl", "/tmp/holo-log/audit.jsonl", "--prompt", "Review"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --logJsonl /tmp/holo-log/audit.jsonl --prompt Review`
       },
       {
         file: "/Users/test/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs",
@@ -255,6 +328,26 @@ describe("hook policy", () => {
         file: "/Users/test/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs",
         args: ["--cwd", "/repo", "--role", "reviewer", "--mode", "packet-only", "--allow-dangerous=true", "--prompt", "Review"],
         raw: "/Users/test/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --allow-dangerous=true --prompt Review"
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--role", "reviewer", "--mode", "packet-only", "--agyCommand", "bash", "--prompt", "Review"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --agyCommand bash --prompt Review`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--role", "reviewer", "--mode", "packet-only", "--runDir", "/tmp/holo-runs", "--prompt", "Review"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --runDir /tmp/holo-runs --prompt Review`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--role", "reviewer", "--mode", "packet-only", "--transport", "terminal", "--prompt", "Review"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --transport terminal --prompt Review`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--role", "reviewer", "--mode", "packet-only", "--transport", "direct", "--transport", "terminal", "--prompt", "Review"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --cwd /repo --role reviewer --mode packet-only --transport direct --transport terminal --prompt Review`
       },
       {
         file: "/repo/tmp/dispatch-agy-headless/scripts/agy-dispatch.mjs",
