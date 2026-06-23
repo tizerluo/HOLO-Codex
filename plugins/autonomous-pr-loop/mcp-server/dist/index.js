@@ -10663,7 +10663,7 @@ async function handleLine(line) {
       respond(request.id, {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "autonomous-pr-loop", version: "0.1.2" }
+        serverInfo: { name: "autonomous-pr-loop", version: "0.1.3" }
       });
       return;
     }

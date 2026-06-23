@@ -1,6 +1,6 @@
 {
   "name": "autonomous-pr-loop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Human On Loop Codex control plane for observable, recoverable Codex workflow loops.",
   "skills": "./skills/",
   "interface": {
