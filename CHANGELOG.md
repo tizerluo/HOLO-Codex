@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- Added `agent-loop release doctor` for reusable read-only release preflight checks.
+- Added automated dashboard smoke checks for release readiness.
+- Promoted reviewer evidence to first-class dashboard data.
+- Improved stale hook diagnostics and structured argv handling.
+- Relaxed hook policy for normal PR delivery, review, release preflight, and cleanup commands while preserving dangerous-action gates.
+- Documented and validated the npm token fallback release path.
+
 ## 0.1.2
 
 - Added the manual GitHub Actions Release workflow for npm Trusted Publishing, dry-run tarball validation, and registry install smoke.

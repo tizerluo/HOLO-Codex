@@ -154,10 +154,11 @@ Expected result: hooks and binding registry restore from the snapshot, non-agent
 
 ## GitHub Release
 
-After publish and post-publish smoke pass:
+The GitHub Actions Release workflow normally creates the tag and GitHub Release.
+Use this manual recovery step only when npm publish has succeeded but the workflow failed before creating the GitHub Release:
 
 ```bash
-VERSION=0.1.2
+VERSION="$(node -p 'require("./package.json").version')"
 git tag "v$VERSION"
 git push origin "v$VERSION"
 gh release create "v$VERSION" \
