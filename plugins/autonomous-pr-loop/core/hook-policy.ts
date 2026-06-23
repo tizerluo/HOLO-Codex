@@ -893,10 +893,10 @@ function matchesGhGraphqlAllowlist(args: string[], repoId?: string): boolean {
 }
 
 function matchesGhPrMergeAllowlist(args: string[]): boolean {
-  const allowedFlags = new Set(["--merge", "--squash", "--rebase", "--body", "--subject", "--repo", "-R"]);
+  const allowedFlags = new Set(["--merge", "--squash", "--rebase", "--delete-branch", "--body", "--subject", "--repo", "-R"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
-    if (["--admin", "--auto", "--delete-branch", "-d"].includes(arg)) {
+    if (["--admin", "--auto", "-d"].includes(arg)) {
       return false;
     }
     if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {

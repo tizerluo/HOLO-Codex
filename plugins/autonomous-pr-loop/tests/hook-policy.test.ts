@@ -647,14 +647,14 @@ describe("hook policy", () => {
     const decision = evaluateHookPolicy({
       repoRoot,
       storage,
-      command: { file: "gh", args: ["pr", "merge", "1", "--merge"] }
+      command: { file: "gh", args: ["pr", "merge", "1", "--merge", "--delete-branch"] }
     });
     const admin = evaluateHookPolicy({
       repoRoot,
       storage,
       command: { file: "gh", args: ["pr", "merge", "1", "--merge", "--admin"] }
     });
-    const deleteBranch = evaluateHookPolicy({
+    const shortDeleteBranch = evaluateHookPolicy({
       repoRoot,
       storage,
       command: { file: "gh", args: ["pr", "merge", "1", "--merge", "-d"] }
@@ -664,7 +664,7 @@ describe("hook policy", () => {
     expect(decision.allow).toBe(true);
     expect(decision.matchedPolicy).toBe("maintainer_override:merge");
     expect(admin.allow).toBe(false);
-    expect(deleteBranch.allow).toBe(false);
+    expect(shortDeleteBranch.allow).toBe(false);
   });
 
   it("uses configured protected paths in the real hook path", () => {

@@ -3770,10 +3770,10 @@ function matchesGhGraphqlAllowlist(args, repoId) {
   return Boolean(query) && !/\bmutation\b/i.test(query ?? "");
 }
 function matchesGhPrMergeAllowlist(args) {
-  const allowedFlags = /* @__PURE__ */ new Set(["--merge", "--squash", "--rebase", "--body", "--subject", "--repo", "-R"]);
+  const allowedFlags = /* @__PURE__ */ new Set(["--merge", "--squash", "--rebase", "--delete-branch", "--body", "--subject", "--repo", "-R"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
-    if (["--admin", "--auto", "--delete-branch", "-d"].includes(arg)) {
+    if (["--admin", "--auto", "-d"].includes(arg)) {
       return false;
     }
     if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
