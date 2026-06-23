@@ -172,6 +172,16 @@ export async function runStateMachine(options: {
         artifacts
       };
     }
+    if (shape.id === "pr-loop" && currentRun.status === "READY" && current === "SELECT_NEXT_PR" && deliveryRunCompleted(storage, currentRun.id)) {
+      return {
+        ok: true,
+        runId: currentRun.id,
+        status: "READY",
+        currentState: "SELECT_NEXT_PR",
+        transitions,
+        artifacts
+      };
+    }
     const maxSteps = options.untilGate ? 10 : 1;
 
     for (let index = 0; index < maxSteps; index += 1) {
@@ -382,6 +392,10 @@ export async function runStateMachine(options: {
       });
       transitions.push({ from: current, to: nextState });
       current = nextState;
+      if (!options.dryRun && shape.id === "pr-loop" && nextState === "SELECT_NEXT_PR" && maybeCompleteMergedDeliveryRun(storage, currentRun)) {
+        currentRun = storage.listRuns(20).find((item) => item.id === currentRun.id) ?? currentRun;
+        break;
+      }
       if (options.singleStep) {
         break;
       }
@@ -553,6 +567,35 @@ export function stopStateMachine(repoRoot: string): StateMachineResult {
   } finally {
     storage.close();
   }
+}
+
+function maybeCompleteMergedDeliveryRun(storage: SqliteAgentLoopStorage, run: AgentLoopRun): boolean {
+  if (!getDeliveryWorkItem(storage, run.id) || !hasMergeDecision(storage, run.id) || deliveryRunCompleted(storage, run.id)) {
+    return false;
+  }
+  const completed = storage.updateRunStatus(run.id, run.version, "READY", { currentState: "SELECT_NEXT_PR", worktreeClean: true });
+  storage.appendDecision({
+    runId: completed.id,
+    kind: "delivery_run_completed",
+    message: "Delivery run completed after merge cleanup.",
+    details: { currentState: "SELECT_NEXT_PR" }
+  });
+  storage.appendEvent({
+    runId: completed.id,
+    kind: "delivery_run_completed",
+    message: "Delivery run completed after merge cleanup.",
+    stateBefore: "SELECT_NEXT_PR",
+    stateAfter: "SELECT_NEXT_PR"
+  });
+  return true;
+}
+
+function hasMergeDecision(storage: SqliteAgentLoopStorage, runId: string): boolean {
+  return storage.listDecisions(runId).some((decision) => decision.kind === "pr_merged" || decision.kind === "merge_reused");
+}
+
+function deliveryRunCompleted(storage: SqliteAgentLoopStorage, runId: string): boolean {
+  return storage.listDecisions(runId).some((decision) => decision.kind === "delivery_run_completed");
 }
 
 function ensureRun(

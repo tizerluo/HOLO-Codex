@@ -3416,20 +3416,20 @@ function protectedPathPolicy(command, protectedPaths) {
 }
 function matchesHookAllowlist(command, context) {
   const args = stripGitGlobalOptions(command.args);
-  if (isApplyPatchCommand(command) || matchesLocalInspectionAllowlist(command) || matchesStructuredInspectionAllowlist(command)) {
+  if (isApplyPatchCommand(command) || matchesLocalInspectionAllowlist(command, context) || matchesStructuredInspectionAllowlist(command, context) || matchesToolDiscoveryAllowlist(command) || matchesClaudeHelpAllowlist(command) || matchesSafeTempMkdirAllowlist(command)) {
     return true;
   }
   if (command.file === "git") {
     if (!matchesGitGlobalScope(command.args, context.repoRoot)) {
       return false;
     }
-    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "branch" && args[1] === "-vv" || args[0] === "rev-parse" || args[0] === "diff" && matchesGitReadArgsAllowlist(args.slice(1)) || ["log", "show"].includes(args[0] ?? "") && matchesGitReadArgsAllowlist(args.slice(1)) || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "remote" && args[1] === "-v" || args[0] === "ls-remote" && matchesGitLsRemoteAllowlist(args.slice(1)) || args[0] === "merge-base" || args[0] === "cat-file" && matchesGitCatFileAllowlist(args.slice(1)) || args[0] === "fetch" && matchesGitFetchAllowlist(args.slice(1)) || args[0] === "pull" && matchesGitPullAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "switch" && args[1] === "-c" && args.length === 3 && isCodexBranch(args[2] ?? "") || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
+    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "branch" && args[1] === "-vv" || args[0] === "rev-parse" || args[0] === "diff" && matchesGitReadArgsAllowlist(args.slice(1)) || ["log", "show"].includes(args[0] ?? "") && matchesGitReadArgsAllowlist(args.slice(1)) || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "remote" && args[1] === "-v" || args[0] === "ls-remote" && matchesGitLsRemoteAllowlist(args.slice(1)) || args[0] === "merge-base" || args[0] === "cat-file" && matchesGitCatFileAllowlist(args.slice(1)) || args[0] === "fetch" && matchesGitFetchAllowlist(args.slice(1)) || args[0] === "pull" && matchesGitPullAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "switch" && args[1] === "-c" && args.length === 3 && isCodexBranch(args[2] ?? "") || args[0] === "branch" && matchesGitBranchMutationAllowlist(args.slice(1)) || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
   }
   if (command.file === "gh") {
     if (!matchesGhRepoScope(command.args, context.repoId)) {
       return false;
     }
-    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "issue" && ["create", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "repo" && command.args[1] === "view" && matchesGhRepoViewAllowlist(command.args.slice(2), context.repoId) || command.args[0] === "release" && matchesGhReleaseReadAllowlist(command.args.slice(1), context.repoId) || command.args[0] === "run" && command.args[1] === "view" && command.args.includes("--log") || command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) || command.args[0] === "api" && command.args[1] === "graphql" && matchesGhGraphqlAllowlist(command.args.slice(2), context.repoId);
+    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "issue" && ["create", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "pr" && command.args[1] === "diff" && matchesGhPrDiffAllowlist(command.args.slice(2), context.repoId) || command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "repo" && command.args[1] === "view" && matchesGhRepoViewAllowlist(command.args.slice(2), context.repoId) || command.args[0] === "release" && matchesGhReleaseReadAllowlist(command.args.slice(1), context.repoId) || command.args[0] === "run" && command.args[1] === "view" && command.args.includes("--log") || command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) || command.args[0] === "api" && command.args[1] === "graphql" && matchesGhGraphqlAllowlist(command.args.slice(2), context.repoId);
   }
   if (command.file === "pnpm") {
     return command.args[0] === "install" && command.args.length === 2 && command.args[1] === "--frozen-lockfile" || command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "build:hooks" || command.args[0] === "build:mcp" || command.args[0] === "exec" && matchesPnpmExecAllowlist(command.args.slice(1)) || ["view", "info"].includes(command.args[0] ?? "") && matchesPackageViewAllowlist(command.args.slice(1)) || command.args[0] === "pack" && matchesPnpmPackAllowlist(command.args.slice(1)) || command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1), context);
@@ -3454,8 +3454,8 @@ function matchesHookAllowlist(command, context) {
   }
   return false;
 }
-function matchesLocalInspectionAllowlist(command) {
-  if (hasUnsafePathArg(command.args)) {
+function matchesLocalInspectionAllowlist(command, context) {
+  if (hasUnsafePathArg(command.args, context)) {
     return false;
   }
   if (command.file === "rg") {
@@ -3478,22 +3478,77 @@ function matchesLocalInspectionAllowlist(command) {
   }
   return false;
 }
-function matchesStructuredInspectionAllowlist(command) {
-  if (hasUnsafePathArg(command.args)) {
+function matchesStructuredInspectionAllowlist(command, context) {
+  if (hasUnsafePathArg(command.args, context)) {
     return false;
   }
-  return command.file === "jq" || command.file === "python" && command.args[0] === "-m" && command.args[1] === "json.tool";
+  return command.file === "jq" && matchesJqAllowlist(command.args) || command.file === "python" && command.args[0] === "-m" && command.args[1] === "json.tool";
 }
 function isDangerousReadArg(arg) {
   return arg === "--help" || arg === "--version" ? false : arg.startsWith("--") && arg.includes("output");
 }
-function hasUnsafePathArg(args) {
+function matchesToolDiscoveryAllowlist(command) {
+  const allowedTools = /* @__PURE__ */ new Set([
+    "agent-loop",
+    "agy",
+    "agy-dispatch.mjs",
+    "claude",
+    "claude-acp-dispatch.mjs",
+    "claude-acp-review",
+    "node",
+    "pnpm"
+  ]);
+  if (command.file === "which") {
+    return command.args.length === 1 && allowedTools.has(command.args[0] ?? "");
+  }
+  return command.file === "command" && command.args.length === 2 && command.args[0] === "-v" && allowedTools.has(command.args[1] ?? "");
+}
+function matchesClaudeHelpAllowlist(command) {
+  if (command.file !== "claude") {
+    return false;
+  }
+  if (command.args.length === 1) {
+    return command.args[0] === "--help" || command.args[0] === "-h";
+  }
+  return command.args.length === 2 && command.args[0] === "acp" && (command.args[1] === "--help" || command.args[1] === "-h");
+}
+function hasUnsafePathArg(args, context) {
   return args.some((arg) => {
     if (!arg || arg === "-" || arg.startsWith("-")) {
+      if (arg.startsWith("--") && arg.includes("=")) {
+        return isUnsafePathValue(arg.slice(arg.indexOf("=") + 1), context);
+      }
       return false;
     }
-    return arg.startsWith("/") || arg.startsWith("~") || arg.split(/[\\/]/).includes("..");
+    return isUnsafePathValue(arg, context);
   });
+}
+function isUnsafePathValue(value, context) {
+  if (value.split(/[\\/]/).includes("..")) {
+    return true;
+  }
+  return (value.startsWith("/") || value.startsWith("~")) && !isTrustedSkillPath(value) && !isSafeReleaseSmokeReadPath(value, context);
+}
+function isTrustedSkillPath(value) {
+  const home = process.env.HOME?.replaceAll("\\", "/");
+  if (!home) {
+    return false;
+  }
+  const normalized = value.replaceAll("\\", "/");
+  return normalized.startsWith(`${home}/.codex/skills/`) || normalized.startsWith(`${home}/.agents/skills/`);
+}
+function isSafeReleaseSmokeReadPath(value, context) {
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.split(/[\\/]/).includes("..")) {
+    return false;
+  }
+  if (normalized === context.repoRoot || normalized.startsWith(`${context.repoRoot}/`)) {
+    return false;
+  }
+  return normalized.startsWith("/tmp/holo-") || /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(normalized);
+}
+function matchesSafeTempMkdirAllowlist(command) {
+  return command.file === "mkdir" && command.args.length === 2 && command.args[0] === "-p" && isSafeTempPath(command.args[1] ?? "");
 }
 function matchesSedReadAllowlist(args) {
   if (args.some((arg) => arg === "-i" || arg.startsWith("-i") || arg === "--in-place" || arg.startsWith("--in-place="))) {
@@ -3526,7 +3581,14 @@ function matchesFindReadAllowlist(args) {
   return true;
 }
 function matchesRipgrepAllowlist(args) {
-  return !args.some((arg) => arg === "--pre" || arg.startsWith("--pre="));
+  return !args.some(
+    (arg) => arg === "--pre" || arg.startsWith("--pre=") || arg === "-L" || arg === "--follow" || arg === "-f" || arg.startsWith("-f") || arg === "--file" || arg.startsWith("--file=") || arg === "--files-from" || arg.startsWith("--files-from=") || arg === "--glob-from" || arg.startsWith("--glob-from=") || arg === "--ignore-file" || arg.startsWith("--ignore-file=")
+  );
+}
+function matchesJqAllowlist(args) {
+  return !args.some(
+    (arg) => arg === "-f" || arg.startsWith("-f") || arg === "--from-file" || arg.startsWith("--from-file=") || arg === "-L" || arg.startsWith("-L") || arg === "--run-tests"
+  );
 }
 function matchesGitGrepAllowlist(args) {
   return !args.some(
@@ -3580,6 +3642,9 @@ function matchesGitFetchAllowlist(args) {
 }
 function matchesGitPullAllowlist(args) {
   return args.length === 3 && args[0] === "--ff-only" && args[1] === "origin" && args[2] === "main";
+}
+function matchesGitBranchMutationAllowlist(args) {
+  return args.length === 2 && args[0] === "-d" && isCodexBranch(args[1] ?? "");
 }
 function matchesGitCatFileAllowlist(args) {
   return ["-p", "-t", "-s", "-e"].includes(args[0] ?? "") && args.length >= 2;
@@ -3679,6 +3744,44 @@ function matchesGhReleaseReadAllowlist(args, repoId) {
   }
   return args.includes("--json");
 }
+function matchesGhPrDiffAllowlist(args, repoId) {
+  if (!repoId || !matchesGhExplicitRepo(args, repoId)) {
+    return false;
+  }
+  let sawNumber = false;
+  let sawDiffMode = false;
+  let sawPathSeparator = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (/^\d+$/.test(arg) && !sawNumber && !sawPathSeparator) {
+      sawNumber = true;
+      continue;
+    }
+    if (arg === "--repo" || arg === "-R") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
+      continue;
+    }
+    if ((arg === "--name-only" || arg === "--patch") && !sawPathSeparator) {
+      sawDiffMode = true;
+      continue;
+    }
+    if (arg === "--" && !sawPathSeparator) {
+      sawPathSeparator = true;
+      continue;
+    }
+    if (sawPathSeparator && isSafeRepoRelativePath(arg)) {
+      continue;
+    }
+    return false;
+  }
+  return sawNumber && sawDiffMode;
+}
+function isSafeRepoRelativePath(value) {
+  return value.length > 0 && !value.startsWith("-") && !value.startsWith("/") && !value.includes("..") && !value.includes("\\");
+}
 function ghRepoFlagValues(args) {
   const repoValues = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -3708,10 +3811,10 @@ function matchesGhGraphqlAllowlist(args, repoId) {
   return Boolean(query) && !/\bmutation\b/i.test(query ?? "");
 }
 function matchesGhPrMergeAllowlist(args) {
-  const allowedFlags = /* @__PURE__ */ new Set(["--merge", "--squash", "--rebase", "--body", "--subject", "--repo", "-R"]);
+  const allowedFlags = /* @__PURE__ */ new Set(["--merge", "--squash", "--rebase", "--delete-branch", "--body", "--subject", "--repo", "-R"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
-    if (["--admin", "--auto", "--delete-branch", "-d"].includes(arg)) {
+    if (["--admin", "--auto", "-d"].includes(arg)) {
       return false;
     }
     if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
@@ -3753,15 +3856,10 @@ function matchesNpmAllowlist(args) {
     return matchesPackageViewAllowlist(args.slice(1));
   }
   if (args[0] === "pack") {
-    return args.includes("--ignore-scripts") && args.includes("--dry-run") && args.includes("--json") && matchesPackageViewAllowlist(args.slice(1));
+    return matchesNpmPackAllowlist(args.slice(1));
   }
   if (args[0] === "install") {
-    const prefix = singleFlagValue(args, "--prefix");
-    const specs = args.slice(1).filter((arg, index) => {
-      const previous = args[index] ?? "";
-      return !arg.startsWith("-") && previous !== "--prefix";
-    });
-    return Boolean(prefix) && isSafeTempPath(prefix ?? "") && specs.length >= 1 && specs.every(isSafeNpmInstallSpec) && matchesPackageViewAllowlist(args.slice(1)) && args.includes("--ignore-scripts") && !args.some((arg) => ["--global", "-g"].includes(arg));
+    return matchesNpmInstallAllowlist(args.slice(1));
   }
   return false;
 }
@@ -3773,8 +3871,66 @@ function matchesPackageViewAllowlist(args) {
     (arg) => arg === "--registry" || arg.startsWith("--registry=") || arg === "--userconfig" || arg.startsWith("--userconfig=") || arg === "--config" || arg.startsWith("--config=")
   );
 }
+function matchesNpmPackAllowlist(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (["--ignore-scripts", "--json", "--dry-run"].includes(arg)) {
+      continue;
+    }
+    if (arg === "--pack-destination") {
+      if (!args[index + 1] || args[index + 1]?.startsWith("-")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--pack-destination=") && arg.slice("--pack-destination=".length)) {
+      continue;
+    }
+    return false;
+  }
+  if (!hasExactIgnoreScripts(args) || !args.includes("--json") || flagValues(args, "--pack-destination").length > 1) {
+    return false;
+  }
+  if (args.includes("--dry-run")) {
+    return true;
+  }
+  const destination = singleFlagValue(args, "--pack-destination");
+  return Boolean(destination) && isSafeTempPath(destination ?? "");
+}
+function matchesNpmInstallAllowlist(args) {
+  const specs = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--ignore-scripts") {
+      continue;
+    }
+    if (arg === "--prefix") {
+      if (!args[index + 1] || args[index + 1]?.startsWith("-")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--prefix=") && arg.slice("--prefix=".length)) {
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return false;
+    }
+    specs.push(arg);
+  }
+  const prefix = singleFlagValue(args, "--prefix");
+  return Boolean(prefix) && flagValues(args, "--prefix").length === 1 && isSafeTempPath(prefix ?? "") && specs.length >= 1 && specs.every(isSafeNpmInstallSpec) && hasExactIgnoreScripts(args);
+}
 function isSafeTempPath(value) {
-  return value.startsWith("/tmp/") || value.startsWith("/var/folders/") || value.startsWith("./tmp/") || value.startsWith("tmp/");
+  if (value.split(/[\\/]/).includes("..")) {
+    return false;
+  }
+  return /^\/tmp\/holo-[^/]+(?:\/|$)/.test(value) || /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(value);
+}
+function hasExactIgnoreScripts(args) {
+  return args.includes("--ignore-scripts") && !args.some((arg) => arg === "--no-ignore-scripts" || arg.startsWith("--no-ignore-scripts=") || arg.startsWith("--ignore-scripts="));
 }
 function isSafeNpmInstallSpec(value) {
   if (value.startsWith("http:") || value.startsWith("https:") || value.startsWith("git+") || value.startsWith("github:") || value.startsWith("ssh:")) {
@@ -3783,6 +3939,9 @@ function isSafeNpmInstallSpec(value) {
   return value === "holo-codex" || value.endsWith(".tgz") && (value.startsWith("./") || value.startsWith("tmp/") || value.startsWith("/tmp/") || value.startsWith("/var/folders/"));
 }
 function matchesAgentLoopAllowlist(args, context) {
+  if (matchesAgentLoopHelpAllowlist(args)) {
+    return true;
+  }
   if (["status", "doctor", "logs", "observe", "timeline", "workers", "stop"].includes(args[0] ?? "")) {
     return true;
   }
@@ -3814,6 +3973,16 @@ function matchesAgentLoopAllowlist(args, context) {
     return args[1] === "approve";
   }
   return false;
+}
+function matchesAgentLoopHelpAllowlist(args) {
+  if (args.length === 0) {
+    return false;
+  }
+  const last = args[args.length - 1];
+  if (last !== "--help" && last !== "-h") {
+    return false;
+  }
+  return args.length <= 3 && !args.some((arg) => arg.includes("/") || arg.includes("\\") || arg.includes(".."));
 }
 function matchesAgentLoopReleaseAllowlist(args) {
   if (args[0] !== "doctor") {
@@ -3882,8 +4051,29 @@ function matchesClaudeAcpDispatchAllowlist(command, context) {
   if (!isTrustedDispatchScript(scriptEvidence, "dispatch-claude-acp", "claude-acp-dispatch.mjs")) {
     return false;
   }
+  if (matchesHelpOnly(args)) {
+    return true;
+  }
+  if (!matchesKnownValueFlags(args, /* @__PURE__ */ new Set([
+    "--cwd",
+    "--effort",
+    "--heartbeatMs",
+    "--mode",
+    "--model",
+    "--permission",
+    "--prompt",
+    "--resume-session",
+    "--softTimeoutMs",
+    "--timeoutMs"
+  ]))) {
+    return false;
+  }
   const modes = flagValues(args, "--mode");
   if (modes.length > 1) {
+    return false;
+  }
+  const resumeSessions = flagValues(args, "--resume-session");
+  if (resumeSessions.length > 1 || resumeSessions.some((session) => !isUuid(session))) {
     return false;
   }
   return singleFlagValue(args, "--cwd") === context.repoRoot && (modes[0] ?? "plan") === "plan" && singleFlagValue(args, "--permission") === "reject";
@@ -3893,6 +4083,21 @@ function matchesAgyDispatchAllowlist(command, context) {
   if (!isTrustedDispatchScript(scriptEvidence, "dispatch-agy-headless", "agy-dispatch.mjs")) {
     return false;
   }
+  if (matchesHelpOnly(args)) {
+    return true;
+  }
+  if (!matchesKnownValueFlags(args, /* @__PURE__ */ new Set([
+    "--conversation",
+    "--cwd",
+    "--mode",
+    "--model",
+    "--printTimeout",
+    "--prompt",
+    "--role",
+    "--transport"
+  ]))) {
+    return false;
+  }
   if (args.some((arg) => arg === "--allow-dangerous" || arg.startsWith("--allow-dangerous="))) {
     return false;
   }
@@ -3900,9 +4105,44 @@ function matchesAgyDispatchAllowlist(command, context) {
   if (modes.length > 1) {
     return false;
   }
+  if (flagValues(args, "--transport").length > 1) {
+    return false;
+  }
   const role = singleFlagValue(args, "--role") ?? "";
   const mode = modes[0] ?? "packet-only";
-  return singleFlagValue(args, "--cwd") === context.repoRoot && ["reviewer", "ui-reviewer", "tester", "planner", "researcher", "second-opinion"].includes(role) && ["packet-only", "sandbox-inspect"].includes(mode);
+  const transport = singleFlagValue(args, "--transport");
+  return singleFlagValue(args, "--cwd") === context.repoRoot && ["reviewer", "ui-reviewer", "tester", "planner", "researcher", "second-opinion"].includes(role) && ["packet-only", "sandbox-inspect"].includes(mode) && (transport === void 0 || transport === "direct");
+}
+function matchesHelpOnly(args) {
+  return args.length === 1 && (args[0] === "--help" || args[0] === "-h");
+}
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+function matchesKnownValueFlags(args, allowedFlags) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (!arg.startsWith("--")) {
+      return false;
+    }
+    const equals = arg.indexOf("=");
+    const flag = equals >= 0 ? arg.slice(0, equals) : arg;
+    if (!allowedFlags.has(flag)) {
+      return false;
+    }
+    if (equals >= 0) {
+      if (arg.slice(equals + 1).length === 0) {
+        return false;
+      }
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      return false;
+    }
+    index += 1;
+  }
+  return true;
 }
 function dispatchScriptArgs(command) {
   const rawScriptPath = command.raw?.match(/^\S+/)?.[0];

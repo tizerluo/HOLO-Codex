@@ -414,7 +414,14 @@ function protectedPathPolicy(command: HookCommand, protectedPaths: string[]): st
 
 function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
   const args = stripGitGlobalOptions(command.args);
-  if (isApplyPatchCommand(command) || matchesLocalInspectionAllowlist(command) || matchesStructuredInspectionAllowlist(command)) {
+  if (
+    isApplyPatchCommand(command) ||
+    matchesLocalInspectionAllowlist(command, context) ||
+    matchesStructuredInspectionAllowlist(command, context) ||
+    matchesToolDiscoveryAllowlist(command) ||
+    matchesClaudeHelpAllowlist(command) ||
+    matchesSafeTempMkdirAllowlist(command)
+  ) {
     return true;
   }
   if (command.file === "git") {
@@ -436,6 +443,7 @@ function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContex
       args[0] === "pull" && matchesGitPullAllowlist(args.slice(1)) ||
       args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") ||
       args[0] === "switch" && args[1] === "-c" && args.length === 3 && isCodexBranch(args[2] ?? "") ||
+      args[0] === "branch" && matchesGitBranchMutationAllowlist(args.slice(1)) ||
       args[0] === "add" && args[1] === "--" ||
       args[0] === "commit" && args[1] === "-m" ||
       args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
@@ -448,6 +456,7 @@ function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContex
       command.args[0] === "issue" && ["create", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) ||
       command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") ||
       command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") ||
+      command.args[0] === "pr" && command.args[1] === "diff" && matchesGhPrDiffAllowlist(command.args.slice(2), context.repoId) ||
       command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) ||
       command.args[0] === "repo" && command.args[1] === "view" && matchesGhRepoViewAllowlist(command.args.slice(2), context.repoId) ||
       command.args[0] === "release" && matchesGhReleaseReadAllowlist(command.args.slice(1), context.repoId) ||
@@ -488,8 +497,8 @@ function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContex
   return false;
 }
 
-function matchesLocalInspectionAllowlist(command: HookCommand): boolean {
-  if (hasUnsafePathArg(command.args)) {
+function matchesLocalInspectionAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
+  if (hasUnsafePathArg(command.args, context)) {
     return false;
   }
   if (command.file === "rg") {
@@ -513,11 +522,11 @@ function matchesLocalInspectionAllowlist(command: HookCommand): boolean {
   return false;
 }
 
-function matchesStructuredInspectionAllowlist(command: HookCommand): boolean {
-  if (hasUnsafePathArg(command.args)) {
+function matchesStructuredInspectionAllowlist(command: HookCommand, context: HookAllowlistContext): boolean {
+  if (hasUnsafePathArg(command.args, context)) {
     return false;
   }
-  return command.file === "jq" ||
+  return command.file === "jq" && matchesJqAllowlist(command.args) ||
     command.file === "python" && command.args[0] === "-m" && command.args[1] === "json.tool";
 }
 
@@ -525,13 +534,86 @@ function isDangerousReadArg(arg: string): boolean {
   return arg === "--help" || arg === "--version" ? false : arg.startsWith("--") && arg.includes("output");
 }
 
-function hasUnsafePathArg(args: string[]): boolean {
+function matchesToolDiscoveryAllowlist(command: HookCommand): boolean {
+  const allowedTools = new Set([
+    "agent-loop",
+    "agy",
+    "agy-dispatch.mjs",
+    "claude",
+    "claude-acp-dispatch.mjs",
+    "claude-acp-review",
+    "node",
+    "pnpm"
+  ]);
+  if (command.file === "which") {
+    return command.args.length === 1 && allowedTools.has(command.args[0] ?? "");
+  }
+  return command.file === "command" &&
+    command.args.length === 2 &&
+    command.args[0] === "-v" &&
+    allowedTools.has(command.args[1] ?? "");
+}
+
+function matchesClaudeHelpAllowlist(command: HookCommand): boolean {
+  if (command.file !== "claude") {
+    return false;
+  }
+  if (command.args.length === 1) {
+    return command.args[0] === "--help" || command.args[0] === "-h";
+  }
+  return command.args.length === 2 &&
+    command.args[0] === "acp" &&
+    (command.args[1] === "--help" || command.args[1] === "-h");
+}
+
+function hasUnsafePathArg(args: string[], context: HookAllowlistContext): boolean {
   return args.some((arg) => {
     if (!arg || arg === "-" || arg.startsWith("-")) {
+      if (arg.startsWith("--") && arg.includes("=")) {
+        return isUnsafePathValue(arg.slice(arg.indexOf("=") + 1), context);
+      }
       return false;
     }
-    return arg.startsWith("/") || arg.startsWith("~") || arg.split(/[\\/]/).includes("..");
+    return isUnsafePathValue(arg, context);
   });
+}
+
+function isUnsafePathValue(value: string, context: HookAllowlistContext): boolean {
+  if (value.split(/[\\/]/).includes("..")) {
+    return true;
+  }
+  return (value.startsWith("/") || value.startsWith("~")) &&
+    !isTrustedSkillPath(value) &&
+    !isSafeReleaseSmokeReadPath(value, context);
+}
+
+function isTrustedSkillPath(value: string): boolean {
+  const home = process.env.HOME?.replaceAll("\\", "/");
+  if (!home) {
+    return false;
+  }
+  const normalized = value.replaceAll("\\", "/");
+  return normalized.startsWith(`${home}/.codex/skills/`) ||
+    normalized.startsWith(`${home}/.agents/skills/`);
+}
+
+function isSafeReleaseSmokeReadPath(value: string, context: HookAllowlistContext): boolean {
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.split(/[\\/]/).includes("..")) {
+    return false;
+  }
+  if (normalized === context.repoRoot || normalized.startsWith(`${context.repoRoot}/`)) {
+    return false;
+  }
+  return normalized.startsWith("/tmp/holo-") ||
+    /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(normalized);
+}
+
+function matchesSafeTempMkdirAllowlist(command: HookCommand): boolean {
+  return command.file === "mkdir" &&
+    command.args.length === 2 &&
+    command.args[0] === "-p" &&
+    isSafeTempPath(command.args[1] ?? "");
 }
 
 function matchesSedReadAllowlist(args: string[]): boolean {
@@ -567,7 +649,34 @@ function matchesFindReadAllowlist(args: string[]): boolean {
 }
 
 function matchesRipgrepAllowlist(args: string[]): boolean {
-  return !args.some((arg) => arg === "--pre" || arg.startsWith("--pre="));
+  return !args.some((arg) =>
+    arg === "--pre" ||
+    arg.startsWith("--pre=") ||
+    arg === "-L" ||
+    arg === "--follow" ||
+    arg === "-f" ||
+    arg.startsWith("-f") ||
+    arg === "--file" ||
+    arg.startsWith("--file=") ||
+    arg === "--files-from" ||
+    arg.startsWith("--files-from=") ||
+    arg === "--glob-from" ||
+    arg.startsWith("--glob-from=") ||
+    arg === "--ignore-file" ||
+    arg.startsWith("--ignore-file=")
+  );
+}
+
+function matchesJqAllowlist(args: string[]): boolean {
+  return !args.some((arg) =>
+    arg === "-f" ||
+    arg.startsWith("-f") ||
+    arg === "--from-file" ||
+    arg.startsWith("--from-file=") ||
+    arg === "-L" ||
+    arg.startsWith("-L") ||
+    arg === "--run-tests"
+  );
 }
 
 function matchesGitGrepAllowlist(args: string[]): boolean {
@@ -648,6 +757,12 @@ function matchesGitPullAllowlist(args: string[]): boolean {
     args[0] === "--ff-only" &&
     args[1] === "origin" &&
     args[2] === "main";
+}
+
+function matchesGitBranchMutationAllowlist(args: string[]): boolean {
+  return args.length === 2 &&
+    args[0] === "-d" &&
+    isCodexBranch(args[1] ?? "");
 }
 
 function matchesGitCatFileAllowlist(args: string[]): boolean {
@@ -755,6 +870,50 @@ function matchesGhReleaseReadAllowlist(args: string[], repoId?: string): boolean
   return args.includes("--json");
 }
 
+function matchesGhPrDiffAllowlist(args: string[], repoId?: string): boolean {
+  if (!repoId || !matchesGhExplicitRepo(args, repoId)) {
+    return false;
+  }
+  let sawNumber = false;
+  let sawDiffMode = false;
+  let sawPathSeparator = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (/^\d+$/.test(arg) && !sawNumber && !sawPathSeparator) {
+      sawNumber = true;
+      continue;
+    }
+    if (arg === "--repo" || arg === "-R") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
+      continue;
+    }
+    if ((arg === "--name-only" || arg === "--patch") && !sawPathSeparator) {
+      sawDiffMode = true;
+      continue;
+    }
+    if (arg === "--" && !sawPathSeparator) {
+      sawPathSeparator = true;
+      continue;
+    }
+    if (sawPathSeparator && isSafeRepoRelativePath(arg)) {
+      continue;
+    }
+    return false;
+  }
+  return sawNumber && sawDiffMode;
+}
+
+function isSafeRepoRelativePath(value: string): boolean {
+  return value.length > 0 &&
+    !value.startsWith("-") &&
+    !value.startsWith("/") &&
+    !value.includes("..") &&
+    !value.includes("\\");
+}
+
 function ghRepoFlagValues(args: string[]): string[] {
   const repoValues: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -786,10 +945,10 @@ function matchesGhGraphqlAllowlist(args: string[], repoId?: string): boolean {
 }
 
 function matchesGhPrMergeAllowlist(args: string[]): boolean {
-  const allowedFlags = new Set(["--merge", "--squash", "--rebase", "--body", "--subject", "--repo", "-R"]);
+  const allowedFlags = new Set(["--merge", "--squash", "--rebase", "--delete-branch", "--body", "--subject", "--repo", "-R"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
-    if (["--admin", "--auto", "--delete-branch", "-d"].includes(arg)) {
+    if (["--admin", "--auto", "-d"].includes(arg)) {
       return false;
     }
     if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
@@ -843,24 +1002,10 @@ function matchesNpmAllowlist(args: string[]): boolean {
     return matchesPackageViewAllowlist(args.slice(1));
   }
   if (args[0] === "pack") {
-    return args.includes("--ignore-scripts") &&
-      args.includes("--dry-run") &&
-      args.includes("--json") &&
-      matchesPackageViewAllowlist(args.slice(1));
+    return matchesNpmPackAllowlist(args.slice(1));
   }
   if (args[0] === "install") {
-    const prefix = singleFlagValue(args, "--prefix");
-    const specs = args.slice(1).filter((arg, index) => {
-      const previous = args[index] ?? "";
-      return !arg.startsWith("-") && previous !== "--prefix";
-    });
-    return Boolean(prefix) &&
-      isSafeTempPath(prefix ?? "") &&
-      specs.length >= 1 &&
-      specs.every(isSafeNpmInstallSpec) &&
-      matchesPackageViewAllowlist(args.slice(1)) &&
-      args.includes("--ignore-scripts") &&
-      !args.some((arg) => ["--global", "-g"].includes(arg));
+    return matchesNpmInstallAllowlist(args.slice(1));
   }
   return false;
 }
@@ -886,8 +1031,76 @@ function matchesPackageViewAllowlist(args: string[]): boolean {
   );
 }
 
+function matchesNpmPackAllowlist(args: string[]): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (["--ignore-scripts", "--json", "--dry-run"].includes(arg)) {
+      continue;
+    }
+    if (arg === "--pack-destination") {
+      if (!args[index + 1] || args[index + 1]?.startsWith("-")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--pack-destination=") && arg.slice("--pack-destination=".length)) {
+      continue;
+    }
+    return false;
+  }
+  if (!hasExactIgnoreScripts(args) || !args.includes("--json") || flagValues(args, "--pack-destination").length > 1) {
+    return false;
+  }
+  if (args.includes("--dry-run")) {
+    return true;
+  }
+  const destination = singleFlagValue(args, "--pack-destination");
+  return Boolean(destination) && isSafeTempPath(destination ?? "");
+}
+
+function matchesNpmInstallAllowlist(args: string[]): boolean {
+  const specs: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--ignore-scripts") {
+      continue;
+    }
+    if (arg === "--prefix") {
+      if (!args[index + 1] || args[index + 1]?.startsWith("-")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--prefix=") && arg.slice("--prefix=".length)) {
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      return false;
+    }
+    specs.push(arg);
+  }
+  const prefix = singleFlagValue(args, "--prefix");
+  return Boolean(prefix) &&
+    flagValues(args, "--prefix").length === 1 &&
+    isSafeTempPath(prefix ?? "") &&
+    specs.length >= 1 &&
+    specs.every(isSafeNpmInstallSpec) &&
+    hasExactIgnoreScripts(args);
+}
+
 function isSafeTempPath(value: string): boolean {
-  return value.startsWith("/tmp/") || value.startsWith("/var/folders/") || value.startsWith("./tmp/") || value.startsWith("tmp/");
+  if (value.split(/[\\/]/).includes("..")) {
+    return false;
+  }
+  return /^\/tmp\/holo-[^/]+(?:\/|$)/.test(value) ||
+    /^\/var\/folders\/[^/]+\/[^/]+\/T\/holo-[^/]+(?:\/|$)/.test(value);
+}
+
+function hasExactIgnoreScripts(args: string[]): boolean {
+  return args.includes("--ignore-scripts") &&
+    !args.some((arg) => arg === "--no-ignore-scripts" || arg.startsWith("--no-ignore-scripts=") || arg.startsWith("--ignore-scripts="));
 }
 
 function isSafeNpmInstallSpec(value: string): boolean {
@@ -900,6 +1113,9 @@ function isSafeNpmInstallSpec(value: string): boolean {
 }
 
 function matchesAgentLoopAllowlist(args: string[], context: HookAllowlistContext): boolean {
+  if (matchesAgentLoopHelpAllowlist(args)) {
+    return true;
+  }
   if (["status", "doctor", "logs", "observe", "timeline", "workers", "stop"].includes(args[0] ?? "")) {
     return true;
   }
@@ -931,6 +1147,17 @@ function matchesAgentLoopAllowlist(args: string[], context: HookAllowlistContext
     return args[1] === "approve";
   }
   return false;
+}
+
+function matchesAgentLoopHelpAllowlist(args: string[]): boolean {
+  if (args.length === 0) {
+    return false;
+  }
+  const last = args[args.length - 1];
+  if (last !== "--help" && last !== "-h") {
+    return false;
+  }
+  return args.length <= 3 && !args.some((arg) => arg.includes("/") || arg.includes("\\") || arg.includes(".."));
 }
 
 function matchesAgentLoopReleaseAllowlist(args: string[]): boolean {
@@ -1003,8 +1230,29 @@ function matchesClaudeAcpDispatchAllowlist(command: HookCommand, context: HookAl
   if (!isTrustedDispatchScript(scriptEvidence, "dispatch-claude-acp", "claude-acp-dispatch.mjs")) {
     return false;
   }
+  if (matchesHelpOnly(args)) {
+    return true;
+  }
+  if (!matchesKnownValueFlags(args, new Set([
+    "--cwd",
+    "--effort",
+    "--heartbeatMs",
+    "--mode",
+    "--model",
+    "--permission",
+    "--prompt",
+    "--resume-session",
+    "--softTimeoutMs",
+    "--timeoutMs"
+  ]))) {
+    return false;
+  }
   const modes = flagValues(args, "--mode");
   if (modes.length > 1) {
+    return false;
+  }
+  const resumeSessions = flagValues(args, "--resume-session");
+  if (resumeSessions.length > 1 || resumeSessions.some((session) => !isUuid(session))) {
     return false;
   }
   return singleFlagValue(args, "--cwd") === context.repoRoot &&
@@ -1017,6 +1265,21 @@ function matchesAgyDispatchAllowlist(command: HookCommand, context: HookAllowlis
   if (!isTrustedDispatchScript(scriptEvidence, "dispatch-agy-headless", "agy-dispatch.mjs")) {
     return false;
   }
+  if (matchesHelpOnly(args)) {
+    return true;
+  }
+  if (!matchesKnownValueFlags(args, new Set([
+    "--conversation",
+    "--cwd",
+    "--mode",
+    "--model",
+    "--printTimeout",
+    "--prompt",
+    "--role",
+    "--transport"
+  ]))) {
+    return false;
+  }
   if (args.some((arg) => arg === "--allow-dangerous" || arg.startsWith("--allow-dangerous="))) {
     return false;
   }
@@ -1024,11 +1287,50 @@ function matchesAgyDispatchAllowlist(command: HookCommand, context: HookAllowlis
   if (modes.length > 1) {
     return false;
   }
+  if (flagValues(args, "--transport").length > 1) {
+    return false;
+  }
   const role = singleFlagValue(args, "--role") ?? "";
   const mode = modes[0] ?? "packet-only";
+  const transport = singleFlagValue(args, "--transport");
   return singleFlagValue(args, "--cwd") === context.repoRoot &&
     ["reviewer", "ui-reviewer", "tester", "planner", "researcher", "second-opinion"].includes(role) &&
-    ["packet-only", "sandbox-inspect"].includes(mode);
+    ["packet-only", "sandbox-inspect"].includes(mode) &&
+    (transport === undefined || transport === "direct");
+}
+
+function matchesHelpOnly(args: string[]): boolean {
+  return args.length === 1 && (args[0] === "--help" || args[0] === "-h");
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function matchesKnownValueFlags(args: string[], allowedFlags: Set<string>): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (!arg.startsWith("--")) {
+      return false;
+    }
+    const equals = arg.indexOf("=");
+    const flag = equals >= 0 ? arg.slice(0, equals) : arg;
+    if (!allowedFlags.has(flag)) {
+      return false;
+    }
+    if (equals >= 0) {
+      if (arg.slice(equals + 1).length === 0) {
+        return false;
+      }
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      return false;
+    }
+    index += 1;
+  }
+  return true;
 }
 
 function dispatchScriptArgs(command: HookCommand): { scriptEvidence: string; args: string[] } {

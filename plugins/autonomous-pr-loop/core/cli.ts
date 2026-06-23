@@ -20,7 +20,8 @@ import { defaultPackageRoot, hookDistRoot, hookSourceRoot } from "./plugin-paths
 import { resumeStateMachine, runStateMachine, stopStateMachine } from "./state-machine.js";
 import { SqliteAgentLoopStorage } from "./storage.js";
 import { resolveRepoRoot } from "./repo-root.js";
-import { bindDeliveryWorkItem } from "./delivery-work-item.js";
+import { bindDeliveryWorkItem, resumeDeliveryRun } from "./delivery-work-item.js";
+import { isWorktreeClean } from "./git.js";
 import { appendWorkflowEvidence, WORKFLOW_STAGE_DEFINITIONS, WORKFLOW_STAGE_IDS } from "./workflow-board.js";
 import { inspectHookCapture } from "./hook-capture.js";
 import type { StateMachineResult } from "./state-types.js";
@@ -235,7 +236,7 @@ function commandHelpUsage(command: string): string | undefined {
     dashboard: "agent-loop dashboard [smoke] [--host 127.0.0.1] [--port 0] [--json] (smoke exit code 0 means no failed checks; inspect status/checks for warning or incomplete Browser validation)",
     release: "agent-loop release doctor [--version VERSION] [--tag TAG] [--json]",
     evidence: "agent-loop evidence append --stage STAGE --summary \"...\" [--run RUN_ID] [--substage ID] [--actor ACTOR] [--status STATUS] [--source SOURCE] [--ref REF] [--artifact ID] [--json]",
-    delivery: "agent-loop delivery bind|stage [options] [--json]"
+    delivery: "agent-loop delivery bind|stage|resume [options] [--json]"
   };
   return usages[command];
 }
@@ -606,8 +607,8 @@ function delivery(repoRoot: string, args: string[], json: boolean, localeOverrid
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     return deliveryHelpResult(json);
   }
-  if (subcommand !== "bind" && subcommand !== "stage") {
-    throw new AgentLoopError("unknown_command", "Usage: agent-loop delivery bind|stage [options]");
+  if (subcommand !== "bind" && subcommand !== "stage" && subcommand !== "resume") {
+    throw new AgentLoopError("unknown_command", "Usage: agent-loop delivery bind|stage|resume [options]");
   }
   const { config } = loadConfig(repoRoot);
   if (config.loopShape !== "pr-loop") {
@@ -615,6 +616,9 @@ function delivery(repoRoot: string, args: string[], json: boolean, localeOverrid
   }
   if (subcommand === "stage") {
     return deliveryStage(repoRoot, args, json);
+  }
+  if (subcommand === "resume") {
+    return deliveryResume(repoRoot, args, json);
   }
   const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
   try {
@@ -632,6 +636,26 @@ function delivery(repoRoot: string, args: string[], json: boolean, localeOverrid
       `issue: #${result.workItem.issue}`,
       result.bound ? "bound: yes" : "bound: reused",
       `hook binding: ${hookBinding.id}`
+    ]);
+  } finally {
+    storage.close();
+  }
+}
+
+function deliveryResume(repoRoot: string, args: string[], json: boolean): CliResult {
+  const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+  try {
+    const result = resumeDeliveryRun(storage, {
+      ...optionalCliValue(args, "--run", "runId"),
+      ...optionalCliValue(args, "--reason", "reason"),
+      currentBranch: getCurrentBranch(repoRoot),
+      worktreeClean: isWorktreeClean(repoRoot)
+    });
+    upsertHookBinding({ repoRoot, runId: result.run.id });
+    return ok(json, { ok: true, ...result }, [
+      `delivery run resumed: ${result.run.id}`,
+      `issue: #${result.workItem.issue}`,
+      `state: ${result.recommendedState}`
     ]);
   } finally {
     storage.close();
@@ -675,6 +699,7 @@ function deliveryHelpResult(json: boolean): CliResult {
   }, [
     "Usage: agent-loop delivery bind --issue N --title \"...\" --url https://github.com/OWNER/REPO/issues/N [--branch BRANCH] [--run RUN_ID]",
     `Usage: agent-loop delivery stage --run RUN_ID --stage STAGE --status ${DELIVERY_STAGE_STATUSES.join("|")} --summary "..." [--substage ID] [--actor codex] [--ref URL]`,
+    `Usage: agent-loop delivery resume --run RUN_ID --reason "..."`,
     `Stages: ${WORKFLOW_STAGE_IDS.join(", ")}`,
     "Substages:",
     ...substages.map((entry) => `  ${entry.stage}: ${entry.substages.join(", ")}`)
@@ -751,7 +776,11 @@ function hooks(repoRoot: string, args: string[], json: boolean, localeOverride: 
       `old private repo hook refs: ${report.legacyPrivateRepoCommands.length}`,
       `bundled hooks config: ${report.bundledHooksConfig.valid ? "valid" : "invalid"}`,
       `binary old private repo refs: ${report.agentLoopBinary.legacyPrivateRepoReferences.length}`,
-      `hook capture: ${report.hookCapture.status} - ${report.hookCapture.reason}`
+      `hook capture: ${report.hookCapture.status} - ${report.hookCapture.reason}`,
+      `run target mismatch: ${report.runTargetMismatch ? "yes" : "no"}`,
+      ...(report.hookBindingRunId ? [`hook binding run: ${report.hookBindingRunId}${report.bindingRunStatus ? ` (${report.bindingRunStatus})` : ""}`] : []),
+      ...(report.storageCurrentRunId ? [`storage current run: ${report.storageCurrentRunId}`] : []),
+      ...(report.recommendedRecoveryCommand ? [`recommended recovery: ${report.recommendedRecoveryCommand}`] : [])
     ]);
   }
   if (subcommand === "unbind") {
@@ -1383,6 +1412,11 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   hooksJsonError?: string;
   registryError?: string;
   hookCapture: ReturnType<typeof inspectHookCapture>;
+  hookBindingRunId?: string;
+  storageCurrentRunId?: string;
+  runTargetMismatch: boolean;
+  bindingRunStatus?: string;
+  recommendedRecoveryCommand?: string;
 } {
   const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
   const hooksPath = join(codexHome, "hooks.json");
@@ -1420,6 +1454,7 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
   const currentRepoBindings = bindings.filter((binding) => binding.status === "active" && binding.repoRoot === repoRoot).length;
   const lock = inspectHookRegistryLock(codexHome);
   const hookCapture = inspectHookCapture(repoRoot, codexHome);
+  const runDiagnostic = hookRunTargetDiagnostic(repoRoot, hookCapture.runId);
   const refreshCommand = `agent-loop install-hooks --repo ${quoteCliArg(repoRoot)}`;
   return {
     hooksPath,
@@ -1437,11 +1472,50 @@ function hookInstallReport(repoRoot: string, packageRoot: string): {
     currentRepoBindings,
     lock,
     hookCapture,
+    ...runDiagnostic,
     installCommand: refreshCommand,
     refreshCommand,
     ...(hooksJsonError ? { hooksJsonError } : {}),
     ...(registryError ? { registryError } : {})
   };
+}
+
+function hookRunTargetDiagnostic(repoRoot: string, hookBindingRunId: string | undefined): {
+  hookBindingRunId?: string;
+  storageCurrentRunId?: string;
+  runTargetMismatch: boolean;
+  bindingRunStatus?: string;
+  recommendedRecoveryCommand?: string;
+} {
+  const path = statePath(repoRoot);
+  if (!existsSync(path)) {
+    return {
+      ...(hookBindingRunId ? { hookBindingRunId } : {}),
+      runTargetMismatch: false
+    };
+  }
+  const storage = new SqliteAgentLoopStorage(path, { mode: "ro" });
+  try {
+    const current = storage.getCurrentRun();
+    const bindingRun = hookBindingRunId
+      ? storage.listRuns(200).find((run) => run.id === hookBindingRunId)
+      : undefined;
+    const runTargetMismatch = Boolean(hookBindingRunId && current?.id && hookBindingRunId !== current.id);
+    const recommendedRecoveryCommand = bindingRun?.status === "STOPPED"
+      ? `agent-loop delivery resume --run ${quoteCliArg(bindingRun.id)} --reason "resume interrupted delivery run"`
+      : runTargetMismatch && hookBindingRunId
+        ? `agent-loop hooks bind --run ${quoteCliArg(hookBindingRunId)}`
+        : undefined;
+    return {
+      ...(hookBindingRunId ? { hookBindingRunId } : {}),
+      ...(current ? { storageCurrentRunId: current.id } : {}),
+      runTargetMismatch,
+      ...(bindingRun ? { bindingRunStatus: bindingRun.status } : {}),
+      ...(recommendedRecoveryCommand ? { recommendedRecoveryCommand } : {})
+    };
+  } finally {
+    storage.close();
+  }
 }
 
 function quoteCliArg(value: string): string {

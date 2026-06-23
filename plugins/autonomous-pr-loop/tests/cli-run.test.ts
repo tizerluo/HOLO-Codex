@@ -474,6 +474,44 @@ exit 1
     expect(after?.currentState).toBe("SELECT_NEXT_PR");
   });
 
+  it("marks merged delivery runs ready after cleanup returns to next PR selection", async () => {
+    const repoRoot = tempRepo();
+    await runAgentLoopCli(["init"], repoRoot);
+    const bind = JSON.parse((await runAgentLoopCli([
+      "delivery",
+      "bind",
+      "--issue",
+      "88",
+      "--title",
+      "Complete merged delivery run",
+      "--url",
+      "https://github.com/6tizer/codex-auto-PR-loop-plusin/issues/88",
+      "--json"
+    ], repoRoot)).stdout);
+    const before = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const run = before.listRuns(20).find((item) => item.id === bind.run.id);
+    before.updateRunStatus(bind.run.id, run?.version ?? bind.run.version, "RUNNING", { currentState: "DISCOVER_PROGRESS" });
+    before.appendDecision({
+      runId: bind.run.id,
+      kind: "pr_merged",
+      message: "Merged PR #88.",
+      details: { prNumber: 88 }
+    });
+    before.close();
+
+    const result = await runAgentLoopCli(["step", "--json"], repoRoot);
+    const payload = JSON.parse(result.stdout);
+    const after = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const completed = after.listRuns(20).find((item) => item.id === bind.run.id);
+    const decisions = after.listDecisions(bind.run.id).map((decision) => decision.kind);
+    after.close();
+
+    expect(result.exitCode).toBe(0);
+    expect(payload.transitions).toEqual([{ from: "DISCOVER_PROGRESS", to: "SELECT_NEXT_PR" }]);
+    expect(completed).toMatchObject({ status: "READY", currentState: "SELECT_NEXT_PR" });
+    expect(decisions).toContain("delivery_run_completed");
+  });
+
   it("logs --json returns recorded events", async () => {
     const repoRoot = tempRepo();
     await runAgentLoopCli(["init"], repoRoot);
@@ -795,6 +833,185 @@ exit 1
     expect(JSON.parse(help.stdout).statuses).toContain("skipped");
     expect(event?.payload).toMatchObject({ stageId: "build", status: "active", source: "delivery_stage" });
     expect(run?.currentState).toBe("SELECT_NEXT_PR");
+  });
+
+  it("resumes a stopped delivery run and keeps explicit evidence scoped to that run", async () => {
+    const repoRoot = tempRepo();
+    await runAgentLoopCli(["init"], repoRoot);
+    const currentBranch = execFileSync("git", ["branch", "--show-current"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    const bind = JSON.parse((await runAgentLoopCli([
+      "delivery",
+      "bind",
+      "--issue",
+      "77",
+      "--title",
+      "Resume interrupted delivery run",
+      "--url",
+      "https://github.com/6tizer/codex-auto-PR-loop-plusin/issues/77",
+      "--branch",
+      currentBranch,
+      "--json"
+    ], repoRoot)).stdout);
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    storage.updateRunStatus(bind.run.id, bind.run.version, "STOPPED", { currentState: "STOPPED", stoppedAt: new Date().toISOString() });
+    const otherRun = storage.createRun("RUNNING", { currentState: "SELECT_NEXT_PR", branch: "codex/issue-78-other" });
+    storage.close();
+
+    const stoppedEvidence = await runAgentLoopCli([
+      "evidence",
+      "append",
+      "--run",
+      bind.run.id,
+      "--stage",
+      "review",
+      "--summary",
+      "Should explain recovery before resume.",
+      "--json"
+    ], repoRoot);
+    const conflictedResume = await runAgentLoopCli([
+      "delivery",
+      "resume",
+      "--run",
+      bind.run.id,
+      "--reason",
+      "continue interrupted PR review",
+      "--json"
+    ], repoRoot);
+    const cleared = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const liveOther = cleared.listRuns(20).find((item) => item.id === otherRun.id);
+    cleared.updateRunStatus(otherRun.id, liveOther?.version ?? otherRun.version, "STOPPED", { currentState: "STOPPED", stoppedAt: new Date().toISOString() });
+    cleared.close();
+    const resume = await runAgentLoopCli([
+      "delivery",
+      "resume",
+      "--run",
+      bind.run.id,
+      "--reason",
+      "continue interrupted PR review",
+      "--json"
+    ], repoRoot);
+    const resumed = JSON.parse(resume.stdout);
+    const evidence = await runAgentLoopCli([
+      "evidence",
+      "append",
+      "--run",
+      bind.run.id,
+      "--stage",
+      "review",
+      "--summary",
+      "Review evidence after resume.",
+      "--json"
+    ], repoRoot);
+    const after = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const event = after.listEvents(50).find((item) => item.message === "Review evidence after resume.");
+    const run = after.listRuns(20).find((item) => item.id === bind.run.id);
+    after.close();
+
+    expect(stoppedEvidence.exitCode).toBe(2);
+    expect(JSON.parse(stoppedEvidence.stdout).error.details.recoveryCommand).toContain(`delivery resume --run ${bind.run.id}`);
+    expect(conflictedResume.exitCode).toBe(2);
+    expect(JSON.parse(conflictedResume.stdout).error.details.conflictingRunId).toBe(otherRun.id);
+    expect(resume.exitCode).toBe(0);
+    expect(resumed.run).toMatchObject({ id: bind.run.id, status: "RUNNING", currentState: "COMMIT_PUSH_PR" });
+    expect(evidence.exitCode).toBe(0);
+    expect(event?.runId).toBe(bind.run.id);
+    expect(run?.status).toBe("RUNNING");
+  });
+
+  it("restores the pre-stop delivery state and rejects unsafe resume requests", async () => {
+    const repoRoot = tempRepo();
+    await runAgentLoopCli(["init"], repoRoot);
+    const currentBranch = execFileSync("git", ["branch", "--show-current"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    const missingRun = await runAgentLoopCli(["delivery", "resume", "--reason", "missing run", "--json"], repoRoot);
+    const missingReason = await runAgentLoopCli(["delivery", "resume", "--run", "run-1", "--json"], repoRoot);
+    const bind = JSON.parse((await runAgentLoopCli([
+      "delivery",
+      "bind",
+      "--issue",
+      "79",
+      "--title",
+      "Resume to previous state",
+      "--url",
+      "https://github.com/6tizer/codex-auto-PR-loop-plusin/issues/79",
+      "--branch",
+      currentBranch,
+      "--json"
+    ], repoRoot)).stdout);
+    const before = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const latest = before.listRuns(20).find((item) => item.id === bind.run.id);
+    const nonStoppedVersion = latest?.version ?? bind.run.version;
+    before.updateRunStatus(bind.run.id, nonStoppedVersion, "RUNNING", { currentState: "READY_TO_MERGE" });
+    const nonStopped = await runAgentLoopCli(["delivery", "resume", "--run", bind.run.id, "--reason", "not stopped", "--json"], repoRoot);
+    const ready = before.listRuns(20).find((item) => item.id === bind.run.id);
+    before.updateRunStatus(bind.run.id, ready?.version ?? nonStoppedVersion + 1, "STOPPED", { currentState: "STOPPED", stoppedAt: new Date().toISOString() });
+    before.appendEvent({
+      runId: bind.run.id,
+      kind: "run_stopped",
+      message: "Run stopped by CLI.",
+      stateBefore: "READY_TO_MERGE",
+      stateAfter: "STOPPED"
+    });
+    const unbound = before.createRun("STOPPED", { currentState: "STOPPED" });
+    before.close();
+
+    const unboundResume = await runAgentLoopCli(["delivery", "resume", "--run", unbound.id, "--reason", "unbound", "--json"], repoRoot);
+    const mismatchBind = JSON.parse((await runAgentLoopCli([
+      "delivery",
+      "bind",
+      "--issue",
+      "80",
+      "--title",
+      "Reject wrong branch",
+      "--url",
+      "https://github.com/6tizer/codex-auto-PR-loop-plusin/issues/80",
+      "--branch",
+      "codex/not-current",
+      "--json"
+    ], repoRoot)).stdout);
+    const mismatchStorage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const mismatchRun = mismatchStorage.listRuns(20).find((item) => item.id === mismatchBind.run.id);
+    mismatchStorage.updateRunStatus(mismatchBind.run.id, mismatchRun?.version ?? mismatchBind.run.version, "STOPPED", { currentState: "STOPPED", stoppedAt: new Date().toISOString() });
+    mismatchStorage.close();
+    const branchMismatch = await runAgentLoopCli(["delivery", "resume", "--run", mismatchBind.run.id, "--reason", "wrong branch", "--json"], repoRoot);
+    const resume = await runAgentLoopCli(["delivery", "resume", "--run", bind.run.id, "--reason", "return to merge", "--json"], repoRoot);
+    const payload = JSON.parse(resume.stdout);
+
+    expect(missingRun.exitCode).toBe(1);
+    expect(missingReason.exitCode).toBe(1);
+    expect(nonStopped.exitCode).toBe(2);
+    expect(unboundResume.exitCode).toBe(2);
+    expect(branchMismatch.exitCode).toBe(2);
+    expect(JSON.parse(branchMismatch.stdout).error.details.expectedBranch).toBe("codex/not-current");
+    expect(resume.exitCode).toBe(0);
+    expect(payload.run).toMatchObject({ id: bind.run.id, status: "RUNNING", currentState: "READY_TO_MERGE" });
+  });
+
+  it("reports hook binding and current-run mismatches in hooks doctor", async () => {
+    const repoRoot = tempRepo();
+    await runAgentLoopCli(["init"], repoRoot);
+    const storage = new SqliteAgentLoopStorage(statePath(repoRoot));
+    const stopped = storage.createRun("RUNNING", { currentState: "COMMIT_PUSH_PR" });
+    storage.updateRunStatus(stopped.id, stopped.version, "STOPPED", { currentState: "STOPPED", stoppedAt: new Date().toISOString() });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const current = storage.createRun("RUNNING", { currentState: "SELECT_NEXT_PR" });
+    storage.close();
+    upsertHookBinding({ repoRoot, runId: stopped.id });
+
+    const doctor = await runAgentLoopCli(["hooks", "doctor", "--json"], repoRoot);
+    const payload = JSON.parse(doctor.stdout);
+    const human = await runAgentLoopCli(["hooks", "doctor"], repoRoot);
+
+    expect(doctor.exitCode).toBe(0);
+    expect(payload).toMatchObject({
+      hookBindingRunId: stopped.id,
+      storageCurrentRunId: current.id,
+      runTargetMismatch: true,
+      bindingRunStatus: "STOPPED"
+    });
+    expect(payload.recommendedRecoveryCommand).toContain("delivery resume --run");
+    expect(payload.recommendedRecoveryCommand).toContain(stopped.id);
+    expect(human.stdout).toContain("run target mismatch: yes");
+    expect(human.stdout).toContain("recommended recovery:");
   });
 
   it("prints timeline, workers with events, observe, and audit export without dashboard tokens", async () => {
