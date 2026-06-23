@@ -3423,13 +3423,13 @@ function matchesHookAllowlist(command, context) {
     if (!matchesGitGlobalScope(command.args, context.repoRoot)) {
       return false;
     }
-    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "branch" && args[1] === "-vv" || args[0] === "rev-parse" || args[0] === "diff" && matchesGitReadArgsAllowlist(args.slice(1)) || ["log", "show"].includes(args[0] ?? "") && matchesGitReadArgsAllowlist(args.slice(1)) || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "remote" && args[1] === "-v" || args[0] === "ls-remote" && matchesGitLsRemoteAllowlist(args.slice(1)) || args[0] === "merge-base" || args[0] === "cat-file" && matchesGitCatFileAllowlist(args.slice(1)) || args[0] === "fetch" && matchesGitFetchAllowlist(args.slice(1)) || args[0] === "pull" && matchesGitPullAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "switch" && args[1] === "-c" && args.length === 3 && isCodexBranch(args[2] ?? "") || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
+    return args[0] === "status" || args[0] === "branch" && args[1] === "--show-current" || args[0] === "branch" && args[1] === "-vv" || args[0] === "rev-parse" || args[0] === "diff" && matchesGitReadArgsAllowlist(args.slice(1)) || ["log", "show"].includes(args[0] ?? "") && matchesGitReadArgsAllowlist(args.slice(1)) || args[0] === "grep" && matchesGitGrepAllowlist(args.slice(1)) || args[0] === "remote" && args[1] === "-v" || args[0] === "ls-remote" && matchesGitLsRemoteAllowlist(args.slice(1)) || args[0] === "merge-base" || args[0] === "cat-file" && matchesGitCatFileAllowlist(args.slice(1)) || args[0] === "fetch" && matchesGitFetchAllowlist(args.slice(1)) || args[0] === "pull" && matchesGitPullAllowlist(args.slice(1)) || args[0] === "switch" && args.length === 2 && typeof args[1] === "string" && !args[1].startsWith("-") || args[0] === "switch" && args[1] === "-c" && args.length === 3 && isCodexBranch(args[2] ?? "") || args[0] === "branch" && matchesGitBranchMutationAllowlist(args.slice(1)) || args[0] === "add" && args[1] === "--" || args[0] === "commit" && args[1] === "-m" || args[0] === "push" && matchesGitPushAllowlist(args.slice(1));
   }
   if (command.file === "gh") {
     if (!matchesGhRepoScope(command.args, context.repoId)) {
       return false;
     }
-    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "issue" && ["create", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "repo" && command.args[1] === "view" && matchesGhRepoViewAllowlist(command.args.slice(2), context.repoId) || command.args[0] === "release" && matchesGhReleaseReadAllowlist(command.args.slice(1), context.repoId) || command.args[0] === "run" && command.args[1] === "view" && command.args.includes("--log") || command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) || command.args[0] === "api" && command.args[1] === "graphql" && matchesGhGraphqlAllowlist(command.args.slice(2), context.repoId);
+    return command.args[0] === "auth" && command.args[1] === "status" || command.args[0] === "issue" && ["create", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") || command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") || command.args[0] === "pr" && command.args[1] === "diff" && matchesGhPrDiffAllowlist(command.args.slice(2), context.repoId) || command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) || command.args[0] === "repo" && command.args[1] === "view" && matchesGhRepoViewAllowlist(command.args.slice(2), context.repoId) || command.args[0] === "release" && matchesGhReleaseReadAllowlist(command.args.slice(1), context.repoId) || command.args[0] === "run" && command.args[1] === "view" && command.args.includes("--log") || command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) || command.args[0] === "api" && command.args[1] === "graphql" && matchesGhGraphqlAllowlist(command.args.slice(2), context.repoId);
   }
   if (command.file === "pnpm") {
     return command.args[0] === "install" && command.args.length === 2 && command.args[1] === "--frozen-lockfile" || command.args[0] === "test" || command.args[0] === "lint" || command.args[0] === "build:hooks" || command.args[0] === "build:mcp" || command.args[0] === "exec" && matchesPnpmExecAllowlist(command.args.slice(1)) || ["view", "info"].includes(command.args[0] ?? "") && matchesPackageViewAllowlist(command.args.slice(1)) || command.args[0] === "pack" && matchesPnpmPackAllowlist(command.args.slice(1)) || command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1), context);
@@ -3643,6 +3643,9 @@ function matchesGitFetchAllowlist(args) {
 function matchesGitPullAllowlist(args) {
   return args.length === 3 && args[0] === "--ff-only" && args[1] === "origin" && args[2] === "main";
 }
+function matchesGitBranchMutationAllowlist(args) {
+  return args.length === 2 && args[0] === "-d" && isCodexBranch(args[1] ?? "");
+}
 function matchesGitCatFileAllowlist(args) {
   return ["-p", "-t", "-s", "-e"].includes(args[0] ?? "") && args.length >= 2;
 }
@@ -3740,6 +3743,44 @@ function matchesGhReleaseReadAllowlist(args, repoId) {
     return false;
   }
   return args.includes("--json");
+}
+function matchesGhPrDiffAllowlist(args, repoId) {
+  if (!repoId || !matchesGhExplicitRepo(args, repoId)) {
+    return false;
+  }
+  let sawNumber = false;
+  let sawDiffMode = false;
+  let sawPathSeparator = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (/^\d+$/.test(arg) && !sawNumber && !sawPathSeparator) {
+      sawNumber = true;
+      continue;
+    }
+    if (arg === "--repo" || arg === "-R") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
+      continue;
+    }
+    if ((arg === "--name-only" || arg === "--patch") && !sawPathSeparator) {
+      sawDiffMode = true;
+      continue;
+    }
+    if (arg === "--" && !sawPathSeparator) {
+      sawPathSeparator = true;
+      continue;
+    }
+    if (sawPathSeparator && isSafeRepoRelativePath(arg)) {
+      continue;
+    }
+    return false;
+  }
+  return sawNumber && sawDiffMode;
+}
+function isSafeRepoRelativePath(value) {
+  return value.length > 0 && !value.startsWith("-") && !value.startsWith("/") && !value.includes("..") && !value.includes("\\");
 }
 function ghRepoFlagValues(args) {
   const repoValues = [];

@@ -7267,6 +7267,16 @@ async function runStateMachine(options) {
         artifacts
       };
     }
+    if (shape.id === "pr-loop" && currentRun.status === "READY" && current === "SELECT_NEXT_PR" && deliveryRunCompleted(storage, currentRun.id)) {
+      return {
+        ok: true,
+        runId: currentRun.id,
+        status: "READY",
+        currentState: "SELECT_NEXT_PR",
+        transitions,
+        artifacts
+      };
+    }
     const maxSteps = options.untilGate ? 10 : 1;
     for (let index = 0; index < maxSteps; index += 1) {
       if (shape.id === "pr-loop" && current === "SELECT_NEXT_PR") {
@@ -7465,6 +7475,10 @@ async function runStateMachine(options) {
       });
       transitions.push({ from: current, to: nextState });
       current = nextState;
+      if (!options.dryRun && shape.id === "pr-loop" && nextState === "SELECT_NEXT_PR" && maybeCompleteMergedDeliveryRun(storage, currentRun)) {
+        currentRun = storage.listRuns(20).find((item) => item.id === currentRun.id) ?? currentRun;
+        break;
+      }
       if (options.singleStep) {
         break;
       }
@@ -7628,6 +7642,32 @@ function stopStateMachine(repoRoot) {
   } finally {
     storage.close();
   }
+}
+function maybeCompleteMergedDeliveryRun(storage, run) {
+  if (!getDeliveryWorkItem(storage, run.id) || !hasMergeDecision(storage, run.id) || deliveryRunCompleted(storage, run.id)) {
+    return false;
+  }
+  const completed = storage.updateRunStatus(run.id, run.version, "READY", { currentState: "SELECT_NEXT_PR", worktreeClean: true });
+  storage.appendDecision({
+    runId: completed.id,
+    kind: "delivery_run_completed",
+    message: "Delivery run completed after merge cleanup.",
+    details: { currentState: "SELECT_NEXT_PR" }
+  });
+  storage.appendEvent({
+    runId: completed.id,
+    kind: "delivery_run_completed",
+    message: "Delivery run completed after merge cleanup.",
+    stateBefore: "SELECT_NEXT_PR",
+    stateAfter: "SELECT_NEXT_PR"
+  });
+  return true;
+}
+function hasMergeDecision(storage, runId) {
+  return storage.listDecisions(runId).some((decision) => decision.kind === "pr_merged" || decision.kind === "merge_reused");
+}
+function deliveryRunCompleted(storage, runId) {
+  return storage.listDecisions(runId).some((decision) => decision.kind === "delivery_run_completed");
 }
 function ensureRun(storage, repoRoot, shape) {
   const existing = storage.getCurrentRun();
@@ -8078,8 +8118,10 @@ function appendWorkflowEvidence(storage, input) {
     throw new AgentLoopError("storage_error", "No run is available for workflow evidence.");
   }
   if (currentRun.status !== "RUNNING" && currentRun.status !== "BLOCKED") {
-    throw new AgentLoopError("policy_violation", "Workflow evidence can only be appended to a running or blocked run.", {
-      details: { runId: currentRun.id, status: currentRun.status }
+    const workItem = getDeliveryWorkItem(storage, currentRun.id);
+    const recoveryCommand = currentRun.status === "STOPPED" && workItem ? `agent-loop delivery resume --run ${currentRun.id} --reason "resume interrupted delivery run"` : void 0;
+    throw new AgentLoopError("policy_violation", recoveryCommand ? "Workflow evidence target run is stopped; resume the delivery run before appending evidence." : "Workflow evidence can only be appended to a running or blocked run.", {
+      details: { runId: currentRun.id, status: currentRun.status, ...recoveryCommand ? { recoveryCommand } : {} }
     });
   }
   const normalized = normalizeWorkflowEvidenceInput(input);
