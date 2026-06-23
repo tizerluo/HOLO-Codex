@@ -4021,6 +4021,7 @@ function matchesClaudeAcpDispatchAllowlist(command, context) {
     "--model",
     "--permission",
     "--prompt",
+    "--resume-session",
     "--softTimeoutMs",
     "--timeoutMs"
   ]))) {
@@ -4028,6 +4029,10 @@ function matchesClaudeAcpDispatchAllowlist(command, context) {
   }
   const modes = flagValues(args, "--mode");
   if (modes.length > 1) {
+    return false;
+  }
+  const resumeSessions = flagValues(args, "--resume-session");
+  if (resumeSessions.length > 1 || resumeSessions.some((session) => !isUuid(session))) {
     return false;
   }
   return singleFlagValue(args, "--cwd") === context.repoRoot && (modes[0] ?? "plan") === "plan" && singleFlagValue(args, "--permission") === "reject";
@@ -4069,6 +4074,9 @@ function matchesAgyDispatchAllowlist(command, context) {
 }
 function matchesHelpOnly(args) {
   return args.length === 1 && (args[0] === "--help" || args[0] === "-h");
+}
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 function matchesKnownValueFlags(args, allowedFlags) {
   for (let index = 0; index < args.length; index += 1) {

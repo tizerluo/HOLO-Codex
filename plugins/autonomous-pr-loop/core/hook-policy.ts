@@ -1189,6 +1189,7 @@ function matchesClaudeAcpDispatchAllowlist(command: HookCommand, context: HookAl
     "--model",
     "--permission",
     "--prompt",
+    "--resume-session",
     "--softTimeoutMs",
     "--timeoutMs"
   ]))) {
@@ -1196,6 +1197,10 @@ function matchesClaudeAcpDispatchAllowlist(command: HookCommand, context: HookAl
   }
   const modes = flagValues(args, "--mode");
   if (modes.length > 1) {
+    return false;
+  }
+  const resumeSessions = flagValues(args, "--resume-session");
+  if (resumeSessions.length > 1 || resumeSessions.some((session) => !isUuid(session))) {
     return false;
   }
   return singleFlagValue(args, "--cwd") === context.repoRoot &&
@@ -1244,6 +1249,10 @@ function matchesAgyDispatchAllowlist(command: HookCommand, context: HookAllowlis
 
 function matchesHelpOnly(args: string[]): boolean {
   return args.length === 1 && (args[0] === "--help" || args[0] === "-h");
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function matchesKnownValueFlags(args: string[], allowedFlags: Set<string>): boolean {

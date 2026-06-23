@@ -161,6 +161,22 @@ describe("hook policy", () => {
         raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --prompt Review`
       },
       {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
+        args: [
+          "--cwd",
+          "/repo",
+          "--resume-session",
+          "da0b684f-eab4-412d-89c6-ed33fe30cbac",
+          "--mode",
+          "plan",
+          "--permission",
+          "reject",
+          "--prompt",
+          "Continue"
+        ],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --resume-session da0b684f-eab4-412d-89c6-ed33fe30cbac --mode plan --permission reject --prompt Continue`
+      },
+      {
         file: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs`,
         args: ["--help"],
         raw: `${trustedSkillHome}/.codex/skills/dispatch-agy-headless/scripts/agy-dispatch.mjs --help`
@@ -318,6 +334,11 @@ describe("hook policy", () => {
         file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
         args: ["--cwd", "/repo", "--mode", "plan", "--permission", "reject", "--logJsonl", "/tmp/holo-log/audit.jsonl", "--prompt", "Review"],
         raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --mode plan --permission reject --logJsonl /tmp/holo-log/audit.jsonl --prompt Review`
+      },
+      {
+        file: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs`,
+        args: ["--cwd", "/repo", "--resume-session", "../../evil", "--mode", "plan", "--permission", "reject", "--prompt", "Continue"],
+        raw: `${trustedSkillHome}/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs --cwd /repo --resume-session ../../evil --mode plan --permission reject --prompt Continue`
       },
       {
         file: "/Users/test/.codex/skills/dispatch-claude-acp/scripts/claude-acp-dispatch.mjs",
