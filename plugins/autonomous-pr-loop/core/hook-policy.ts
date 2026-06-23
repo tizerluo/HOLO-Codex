@@ -449,6 +449,8 @@ function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContex
       command.args[0] === "issue" && ["list", "view"].includes(command.args[1] ?? "") ||
       command.args[0] === "pr" && ["list", "view", "checks"].includes(command.args[1] ?? "") ||
       command.args[0] === "pr" && ["create", "ready", "comment"].includes(command.args[1] ?? "") && matchesGhWriteAllowlist(command.args, context.repoId) ||
+      command.args[0] === "repo" && command.args[1] === "view" && matchesGhRepoViewAllowlist(command.args.slice(2), context.repoId) ||
+      command.args[0] === "release" && matchesGhReleaseReadAllowlist(command.args.slice(1), context.repoId) ||
       command.args[0] === "run" && command.args[1] === "view" && command.args.includes("--log") ||
       command.args[0] === "pr" && command.args[1] === "merge" && matchesGhPrMergeAllowlist(command.args.slice(2)) ||
       command.args[0] === "api" && command.args[1] === "graphql" && matchesGhGraphqlAllowlist(command.args.slice(2), context.repoId);
@@ -463,6 +465,9 @@ function matchesHookAllowlist(command: HookCommand, context: HookAllowlistContex
       ["view", "info"].includes(command.args[0] ?? "") && matchesPackageViewAllowlist(command.args.slice(1)) ||
       command.args[0] === "pack" && matchesPnpmPackAllowlist(command.args.slice(1)) ||
       command.args[0] === "agent-loop" && matchesAgentLoopAllowlist(command.args.slice(1), context);
+  }
+  if (command.file === "agent-loop") {
+    return matchesAgentLoopAllowlist(command.args, context);
   }
   if (command.file === "npm") {
     return matchesNpmAllowlist(command.args);
@@ -624,7 +629,12 @@ function matchesGitLsRemoteAllowlist(args: string[]): boolean {
   if (args[0] !== "origin") {
     return false;
   }
-  return args.slice(1).every((arg) => arg === "main" || isCodexBranch(arg));
+  return args.slice(1).every((arg) =>
+    arg === "main" ||
+    arg === "refs/heads/main" ||
+    /^refs\/tags\/v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(arg) ||
+    isCodexBranch(arg)
+  );
 }
 
 function matchesGitFetchAllowlist(args: string[]): boolean {
@@ -686,6 +696,63 @@ function matchesGhWriteAllowlist(args: string[], repoId?: string): boolean {
 function matchesGhExplicitRepo(args: string[], repoId: string): boolean {
   const repoValues = ghRepoFlagValues(args);
   return repoValues.length === 1 && repoValues[0] === repoId;
+}
+
+function matchesGhRepoViewAllowlist(args: string[], repoId?: string): boolean {
+  if (!repoId || args[0] !== repoId) {
+    return false;
+  }
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--json") {
+      const value = args[index + 1] ?? "";
+      if (value !== "defaultBranchRef,nameWithOwner") {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    return false;
+  }
+  return args.includes("--json");
+}
+
+function matchesGhReleaseReadAllowlist(args: string[], repoId?: string): boolean {
+  const subcommand = args[0];
+  if (!repoId || !["view", "list"].includes(subcommand ?? "") || !matchesGhExplicitRepo(args, repoId)) {
+    return false;
+  }
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--repo" || arg === "-R") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || arg.startsWith("-R=") || arg.startsWith("-R") && arg.length > 2) {
+      continue;
+    }
+    if (arg === "--json") {
+      const value = args[index + 1] ?? "";
+      const expected = subcommand === "view" ? "tagName,publishedAt,url" : "tagName,publishedAt";
+      if (value !== expected) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg === "--limit") {
+      if (!/^\d+$/.test(args[index + 1] ?? "")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (subcommand === "view" && index === 1 && /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(arg)) {
+      continue;
+    }
+    return false;
+  }
+  return args.includes("--json");
 }
 
 function ghRepoFlagValues(args: string[]): string[] {
@@ -854,6 +921,9 @@ function matchesAgentLoopAllowlist(args: string[], context: HookAllowlistContext
   if (args[0] === "dashboard") {
     return matchesAgentLoopDashboardAllowlist(args.slice(1));
   }
+  if (args[0] === "release") {
+    return matchesAgentLoopReleaseAllowlist(args.slice(1));
+  }
   if (args[0] === "evidence") {
     return args[1] === "append";
   }
@@ -861,6 +931,37 @@ function matchesAgentLoopAllowlist(args: string[], context: HookAllowlistContext
     return args[1] === "approve";
   }
   return false;
+}
+
+function matchesAgentLoopReleaseAllowlist(args: string[]): boolean {
+  if (args[0] !== "doctor") {
+    return false;
+  }
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--help" || arg === "-h") {
+      continue;
+    }
+    if (arg === "--json") {
+      continue;
+    }
+    if (arg === "--version") {
+      if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(args[index + 1] ?? "")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg === "--tag") {
+      if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(args[index + 1] ?? "")) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 function matchesAgentLoopDashboardAllowlist(args: string[]): boolean {

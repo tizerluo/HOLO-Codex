@@ -11,7 +11,7 @@ import { observeCodexHook } from "../core/hook-observer.js";
 import { resolveHookRoute, upsertHookBinding } from "../core/hook-router.js";
 import { blockRunForTerminalWorker } from "../core/state-machine.js";
 import { SqliteAgentLoopStorage } from "../core/storage.js";
-import { cleanupTempRepos, tempRepo } from "./helpers.js";
+import { cleanupTempRepos, tempRepo, withFakeExecutable } from "./helpers.js";
 
 describe("PR B CLI", () => {
   afterEach(() => cleanupTempRepos());
@@ -211,6 +211,80 @@ describe("PR B CLI", () => {
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("smoke exit code 0 means no failed checks");
     expect(help.stdout).toContain("incomplete Browser validation");
+  });
+
+  it("runs release doctor as read-only structured preflight output", async () => {
+    const repoRoot = tempRepo("agent-loop-release-doctor-cli-");
+    writeReleaseDoctorFixture(repoRoot, "0.1.2");
+    const beforeBranch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: repoRoot,
+      encoding: "utf8"
+    }).trim();
+    const beforePackage = readFileSync(join(repoRoot, "package.json"), "utf8");
+    const restoreGit = withFakeExecutable(repoRoot, "git", `#!/bin/sh
+case "$*" in
+  "rev-parse --show-toplevel") pwd ;;
+  "branch --show-current") echo main ;;
+  "status --short") exit 0 ;;
+  "rev-parse HEAD") echo abc123 ;;
+  "rev-parse origin/main") echo abc123 ;;
+  "remote get-url origin") echo https://github.com/owner/repo.git ;;
+  "ls-remote origin refs/heads/main") printf 'abc123\\trefs/heads/main\\n' ;;
+  "ls-remote origin refs/tags/v0.1.2") printf 'def456\\trefs/tags/v0.1.2\\n' ;;
+  *) /usr/bin/git "$@" ;;
+esac
+`);
+    const restoreGh = withFakeExecutable(repoRoot, "gh", `#!/bin/sh
+case "$1 $2" in
+  "repo view") printf '{"nameWithOwner":"owner/repo","defaultBranchRef":{"name":"main"}}\\n' ;;
+  "issue list") printf '[]\\n' ;;
+  "pr list") printf '[]\\n' ;;
+  "release view") echo "release not found" >&2; exit 1 ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+`);
+    const restoreNpm = withFakeExecutable(repoRoot, "npm", `#!/bin/sh
+if [ "$1" = "view" ]; then
+  printf '"0.1.2"\\n'
+  exit 0
+fi
+echo "unexpected npm $*" >&2
+exit 1
+`);
+    try {
+      const result = await runAgentLoopCli(["release", "doctor", "--json"], repoRoot);
+      const payload = JSON.parse(result.stdout) as {
+        status: string;
+        version: string;
+        tag: string;
+        checks: Array<{ id: string; status: string }>;
+      };
+
+      expect(result.exitCode).toBe(1);
+      expect(payload.status).toBe("fail");
+      expect(payload.version).toBe("0.1.2");
+      expect(payload.tag).toBe("v0.1.2");
+      expect(payload.checks.find((check) => check.id === "npm_version")).toMatchObject({ status: "fail" });
+      expect(payload.checks.find((check) => check.id === "git_tag")).toMatchObject({ status: "fail" });
+      expect(execFileSync("git", ["branch", "--show-current"], { cwd: repoRoot, encoding: "utf8" }).trim()).toBe(beforeBranch);
+      expect(readFileSync(join(repoRoot, "package.json"), "utf8")).toBe(beforePackage);
+    } finally {
+      restoreNpm();
+      restoreGh();
+      restoreGit();
+    }
+  });
+
+  it("shows release doctor help", async () => {
+    const repoRoot = tempRepo("agent-loop-release-doctor-help-");
+    const help = await runAgentLoopCli(["release", "doctor", "--help"], repoRoot);
+    const invalid = await runAgentLoopCli(["release", "doctor", "garbage", "--json"], repoRoot);
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("agent-loop release doctor");
+    expect(help.stdout).toContain("read-only");
+    expect(invalid.exitCode).toBe(1);
+    expect(JSON.parse(invalid.stdout).error.code).toBe("invalid_config");
   });
 
   it("keeps two --repo targets isolated", async () => {
@@ -1843,4 +1917,58 @@ function currentRunId(repoRoot: string): string | undefined {
   const run = storage.getCurrentRun();
   storage.close();
   return run?.id;
+}
+
+function writeReleaseDoctorFixture(repoRoot: string, version: string): void {
+  mkdirSync(join(repoRoot, "plugins/autonomous-pr-loop/.codex-plugin"), { recursive: true });
+  mkdirSync(join(repoRoot, "plugins/autonomous-pr-loop/mcp-server/src"), { recursive: true });
+  mkdirSync(join(repoRoot, "plugins/autonomous-pr-loop/mcp-server/dist"), { recursive: true });
+  mkdirSync(join(repoRoot, "plugins/autonomous-pr-loop/core"), { recursive: true });
+  mkdirSync(join(repoRoot, "plugins/autonomous-pr-loop/hooks/dist"), { recursive: true });
+  mkdirSync(join(repoRoot, ".github/workflows"), { recursive: true });
+  mkdirSync(join(repoRoot, "docs"), { recursive: true });
+  writeFileSync(join(repoRoot, "package.json"), `${JSON.stringify({
+    name: "holo-codex",
+    version,
+    scripts: {
+      lint: "tsc --noEmit",
+      test: "vitest run",
+      "build:hooks": "esbuild hooks"
+    }
+  }, null, 2)}\n`);
+  writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/package.json"), `${JSON.stringify({
+    name: "autonomous-pr-loop",
+    version
+  })}\n`);
+  writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/.codex-plugin/plugin.json"), `${JSON.stringify({
+    name: "autonomous-pr-loop",
+    version
+  })}\n`);
+  const serverInfo = `serverInfo: { name: "autonomous-pr-loop", version: "${version}" }`;
+  writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/mcp-server/src/index.ts"), serverInfo);
+  writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/mcp-server/dist/index.js"), serverInfo);
+  for (const name of ["pre-tool-use", "post-tool-use", "user-prompt-submit", "stop", "session-start", "pre-compact", "post-compact", "permission-request"]) {
+    writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/hooks", `${name}.ts`), `export const name = "${name}";\n`);
+    writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/hooks/dist", `${name}.js`), `export const name = "${name}";\n`);
+  }
+  writeFileSync(join(repoRoot, "plugins/autonomous-pr-loop/core/cli.ts"), "Usage: agent-loop dashboard smoke --json\n");
+  writeFileSync(join(repoRoot, "docs/release-checklist.md"), "npm pack --ignore-scripts --dry-run --json\n");
+  writeFileSync(join(repoRoot, ".github/workflows/release.yml"), [
+    "name: Release",
+    "on:",
+    "  workflow_dispatch:",
+    "    inputs:",
+    "      version:",
+    "      tag:",
+    "      dry_run:",
+    "jobs:",
+    "  validate:",
+    "    steps:",
+    "      - run: pnpm lint",
+    "      - run: pnpm exec vitest run",
+    "      - run: pnpm build:hooks",
+    "      - run: npm pack --ignore-scripts --json",
+    "      - name: Tarball install smoke",
+    "      - run: npm publish"
+  ].join("\n"));
 }
