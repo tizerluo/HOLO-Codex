@@ -11,6 +11,7 @@ import { runDashboardSmoke, type DashboardSmokeReport } from "./dashboard-smoke.
 import { runDoctor } from "./doctor.js";
 import { AgentLoopError, isGateCode, toErrorPayload, type AgentLoopErrorCode } from "./errors.js";
 import { recoverBlockedRun } from "./gate-recovery.js";
+import { runReleaseDoctor, type ReleaseDoctorReport } from "./release-doctor.js";
 import { commandsReferencingLegacyPrivateRepo, inspectAgentLoopBinary, inspectBundledHooksConfig, redactDiagnosticText, type AgentLoopBinaryInspection, type BundledHooksConfigInspection } from "./hook-diagnostics.js";
 import { agentLoopRouterHookEntries, collectHookCommands, isAgentLoopHookCommand, isLegacyAgentLoopHookCommand } from "./hook-installation.js";
 import { hookRegistryPath, inspectHookRegistryLock, listHookBindings, removeHookBinding, upsertHookBinding } from "./hook-router.js";
@@ -87,6 +88,9 @@ export async function runAgentLoopCli(
       if (command === "local") {
         return localHelpResult(json, filtered[1], filtered[2]);
       }
+      if (command === "release") {
+        return releaseHelpResult(json);
+      }
       const usage = commandHelpUsage(command);
       if (usage) {
         return helpResult(json, usage);
@@ -155,6 +159,9 @@ export async function runAgentLoopCli(
     if (command === "dashboard") {
       return await dashboard(targetRepoRoot, filtered, json, localeOverride);
     }
+    if (command === "release") {
+      return release(targetRepoRoot, filtered, json);
+    }
     throw new AgentLoopError("unknown_command", `Unknown command: ${command}`);
   } catch (error) {
     const payload = toErrorPayload(error);
@@ -195,6 +202,7 @@ function helpResult(json: boolean, usage = "agent-loop <command> [options]"): Cl
     "approve-gate",
     "maintainer-override",
     "dashboard",
+    "release",
     "evidence",
     "delivery"
   ];
@@ -225,6 +233,7 @@ function commandHelpUsage(command: string): string | undefined {
     "approve-gate": "agent-loop approve-gate <gate-id> --note \"...\" [--next-state STATE] [--json]",
     "maintainer-override": "agent-loop maintainer-override approve --scope publish|merge --reason \"...\" [--ttl-minutes N] [--run RUN_ID] [--json]",
     dashboard: "agent-loop dashboard [smoke] [--host 127.0.0.1] [--port 0] [--json] (smoke exit code 0 means no failed checks; inspect status/checks for warning or incomplete Browser validation)",
+    release: "agent-loop release doctor [--version VERSION] [--tag TAG] [--json]",
     evidence: "agent-loop evidence append --stage STAGE --summary \"...\" [--run RUN_ID] [--substage ID] [--actor ACTOR] [--status STATUS] [--source SOURCE] [--ref REF] [--artifact ID] [--json]",
     delivery: "agent-loop delivery bind|stage [options] [--json]"
   };
@@ -256,9 +265,11 @@ const OPTIONS_WITH_VALUES = new Set([
   "--snapshot",
   "--substage",
   "--summary",
+  "--tag",
   "--title",
   "--ttl-minutes",
   "--url",
+  "--version",
   "--worker"
 ]);
 
@@ -1056,6 +1067,83 @@ async function dashboard(repoRoot: string, args: string[], json: boolean, locale
     exitCode: 0,
     stdout,
     stderr: `dashboard token: ${server.token}\n# do not log or redirect this token\n`
+  };
+}
+
+function release(repoRoot: string, args: string[], json: boolean): CliResult {
+  const subcommand = args[1];
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    return releaseHelpResult(json);
+  }
+  if (subcommand !== "doctor") {
+    throw new AgentLoopError("unknown_command", `Unknown release command: ${subcommand}`);
+  }
+  const { version, tag } = releaseDoctorCliOptions(args);
+  const report = runReleaseDoctor(repoRoot, {
+    ...(version ? { version } : {}),
+    ...(tag ? { tag } : {})
+  });
+  const stdout = json ? `${JSON.stringify(report, null, 2)}\n` : releaseDoctorText(report);
+  return {
+    exitCode: report.status === "fail" ? 1 : 0,
+    stdout,
+    stderr: ""
+  };
+}
+
+function releaseHelpResult(json: boolean): CliResult {
+  return ok(json, {
+    ok: true,
+    usage: commandHelpUsage("release"),
+    commands: ["doctor"]
+  }, [
+    `Usage: ${commandHelpUsage("release")}`,
+    "Commands: doctor",
+    "Release doctor is read-only: it reports preflight pass/warn/fail without publishing, tagging, or mutating files."
+  ]);
+}
+
+function releaseDoctorText(report: ReleaseDoctorReport): string {
+  return [
+    `release doctor: ${report.status}`,
+    `version: ${report.version}`,
+    `tag: ${report.tag}`,
+    `summary: ${report.summary.passed} passed, ${report.summary.warnings} warning(s), ${report.summary.failed} failed`,
+    ...report.checks.map((check) => `${check.status}: ${check.label} - ${check.message}`)
+  ].join("\n") + "\n";
+}
+
+function releaseDoctorCliOptions(args: string[]): { version?: string; tag?: string } {
+  let version: string | undefined;
+  let tag: string | undefined;
+  for (let index = 2; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--json") {
+      continue;
+    }
+    if (arg === "--version") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new AgentLoopError("invalid_config", "release doctor --version requires a value.");
+      }
+      version = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--tag") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new AgentLoopError("invalid_config", "release doctor --tag requires a value.");
+      }
+      tag = value;
+      index += 1;
+      continue;
+    }
+    throw new AgentLoopError("invalid_config", `Unsupported release doctor argument: ${arg}`);
+  }
+  return {
+    ...(version ? { version } : {}),
+    ...(tag ? { tag } : {})
   };
 }
 
