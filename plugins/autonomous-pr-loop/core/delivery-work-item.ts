@@ -1,6 +1,6 @@
 import { AgentLoopError } from "./errors.js";
 import { redactSecrets } from "./redaction.js";
-import type { AgentLoopEvent, AgentLoopRun, AgentLoopStorage } from "./types.js";
+import type { AgentLoopDecision, AgentLoopEvent, AgentLoopRun, AgentLoopStorage } from "./types.js";
 
 export const DELIVERY_WORK_ITEM_BOUND_KIND = "delivery_work_item_bound";
 export const WORKFLOW_STAGE_EVIDENCE_KIND = "workflow_stage_evidence";
@@ -28,6 +28,21 @@ export interface BindDeliveryWorkItemResult {
   reused: boolean;
   bound: boolean;
   event?: AgentLoopEvent;
+}
+
+export interface ResumeDeliveryRunInput {
+  runId?: string;
+  reason?: string;
+  currentBranch?: string;
+  worktreeClean?: boolean;
+}
+
+export interface ResumeDeliveryRunResult {
+  run: AgentLoopRun;
+  workItem: DeliveryWorkItem;
+  event: AgentLoopEvent;
+  decision: AgentLoopDecision;
+  recommendedState: string;
 }
 
 export function bindDeliveryWorkItem(
@@ -70,6 +85,115 @@ export function selectDefaultDeliveryRun(storage: AgentLoopStorage): AgentLoopRu
   return storage
     .listRuns(200)
     .find((run) => isLiveRun(run) && getDeliveryWorkItem(storage, run.id) !== undefined);
+}
+
+export function resumeDeliveryRun(
+  storage: AgentLoopStorage,
+  input: ResumeDeliveryRunInput
+): ResumeDeliveryRunResult {
+  const runId = typeof input.runId === "string" && input.runId.trim().length > 0 ? input.runId.trim() : "";
+  if (!runId) {
+    throw new AgentLoopError("invalid_config", "delivery resume requires --run.");
+  }
+  const reason = typeof input.reason === "string" && input.reason.trim().length > 0 ? redactSecrets(input.reason.trim()) : "";
+  if (!reason) {
+    throw new AgentLoopError("invalid_config", "delivery resume requires --reason.");
+  }
+  const run = storage.listRuns(200).find((item) => item.id === runId);
+  if (!run) {
+    throw new AgentLoopError("storage_error", `Run not found: ${runId}`);
+  }
+  if (run.status !== "STOPPED") {
+    throw new AgentLoopError("policy_violation", "Only stopped delivery runs can be resumed.", {
+      details: { runId: run.id, status: run.status },
+      exitCode: 2
+    });
+  }
+  const workItem = getDeliveryWorkItem(storage, run.id);
+  if (!workItem) {
+    throw new AgentLoopError("policy_violation", "Only runs bound to a delivery work item can be resumed.", {
+      details: { runId: run.id },
+      exitCode: 2
+    });
+  }
+  const currentBranch = input.currentBranch?.trim();
+  if (workItem.branch && currentBranch && workItem.branch !== currentBranch) {
+    throw new AgentLoopError("policy_violation", "Refusing to resume a delivery run from a different branch.", {
+      details: { runId: run.id, expectedBranch: workItem.branch, currentBranch },
+      exitCode: 2
+    });
+  }
+  const conflicting = storage
+    .listRuns(200)
+    .find((item) => item.id !== run.id && isLiveRun(item));
+  if (conflicting) {
+    const existing = getDeliveryWorkItem(storage, conflicting.id);
+    throw new AgentLoopError("policy_violation", "Another active delivery run conflicts with the requested resume.", {
+      details: { runId: run.id, conflictingRunId: conflicting.id, existingIssue: existing?.issue, requestedIssue: workItem.issue },
+      exitCode: 2
+    });
+  }
+
+  const recommendedState = resumeStateForRun(storage, run);
+  let resumed: AgentLoopRun;
+  try {
+    resumed = storage.updateRunStatus(run.id, run.version, "RUNNING", {
+      currentState: recommendedState,
+      ...(currentBranch ? { branch: currentBranch } : {}),
+      ...(input.worktreeClean !== undefined ? { worktreeClean: input.worktreeClean } : {})
+    });
+  } catch (error) {
+    if (isUniqueRunningRunError(error)) {
+      throw new AgentLoopError("policy_violation", "Another active delivery run conflicts with the requested resume.", {
+        details: { runId: run.id },
+        exitCode: 2
+      });
+    }
+    throw error;
+  }
+  const event = storage.appendEvent({
+    runId: resumed.id,
+    kind: "delivery_run_resumed",
+    message: `Resumed delivery run for issue #${workItem.issue}.`,
+    stateBefore: run.currentState ?? "STOPPED",
+    stateAfter: recommendedState,
+    payload: {
+      issue: workItem.issue,
+      branch: workItem.branch,
+      reason
+    }
+  });
+  const decision = storage.appendDecision({
+    runId: resumed.id,
+    kind: "delivery_run_resumed",
+    message: `Resumed delivery run for issue #${workItem.issue}.`,
+    details: {
+      issue: workItem.issue,
+      branch: workItem.branch,
+      reason
+    }
+  });
+  return { run: resumed, workItem, event, decision, recommendedState };
+}
+
+function resumeStateForRun(storage: AgentLoopStorage, run: AgentLoopRun): string {
+  const stopped = storage
+    .listEvents(1000)
+    .filter((event) => event.runId === run.id && event.kind === "run_stopped")
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
+  const candidate = stopped?.stateBefore ?? run.currentState;
+  return isSafeResumeState(candidate) ? candidate : "COMMIT_PUSH_PR";
+}
+
+function isSafeResumeState(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value !== "STOPPED" &&
+    value !== "BLOCKED";
+}
+
+function isUniqueRunningRunError(error: unknown): boolean {
+  return error instanceof Error && /unique constraint failed: runs\.status/i.test(error.message);
 }
 
 export function defaultIssueBranch(issue: number, title: string, prefix: string): string {

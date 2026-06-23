@@ -3,7 +3,7 @@ import { PR_LOOP_STATES } from "./loop-shapes.js";
 import { resolveProfile, workflowStages } from "./profiles.js";
 import type { MergeReadiness } from "./autonomy-policy.js";
 import { redactSecrets } from "./redaction.js";
-import { selectDefaultDeliveryRun, type DeliveryWorkItem } from "./delivery-work-item.js";
+import { getDeliveryWorkItem, selectDefaultDeliveryRun, type DeliveryWorkItem } from "./delivery-work-item.js";
 import type { HookCaptureReport } from "./hook-capture.js";
 import type { AgentLoopState } from "./state-types.js";
 import type {
@@ -539,8 +539,14 @@ export function appendWorkflowEvidence(storage: AgentLoopStorage, input: AppendW
     throw new AgentLoopError("storage_error", "No run is available for workflow evidence.");
   }
   if (currentRun.status !== "RUNNING" && currentRun.status !== "BLOCKED") {
-    throw new AgentLoopError("policy_violation", "Workflow evidence can only be appended to a running or blocked run.", {
-      details: { runId: currentRun.id, status: currentRun.status }
+    const workItem = getDeliveryWorkItem(storage, currentRun.id);
+    const recoveryCommand = currentRun.status === "STOPPED" && workItem
+      ? `agent-loop delivery resume --run ${currentRun.id} --reason "resume interrupted delivery run"`
+      : undefined;
+    throw new AgentLoopError("policy_violation", recoveryCommand
+      ? "Workflow evidence target run is stopped; resume the delivery run before appending evidence."
+      : "Workflow evidence can only be appended to a running or blocked run.", {
+      details: { runId: currentRun.id, status: currentRun.status, ...(recoveryCommand ? { recoveryCommand } : {}) }
     });
   }
   const normalized = normalizeWorkflowEvidenceInput(input);
