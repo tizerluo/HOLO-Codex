@@ -7,6 +7,7 @@
 - Promoted reviewer evidence to first-class dashboard data.
 - Improved stale hook diagnostics and structured argv handling.
 - Relaxed hook policy for normal PR delivery, review, release preflight, and cleanup commands while preserving dangerous-action gates.
+- Filled reviewer dispatch and release smoke hook allowlist gaps found during live PreToolUse validation.
 - Documented and validated the npm token fallback release path.
 
 ## 0.1.2
